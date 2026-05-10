@@ -1,0 +1,47 @@
+name: ruisi_flutter
+description: "睿思论坛 Flutter 客户端 - 西安电子科技大学校园论坛"
+publish_to: "none"
+
+version: 2.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 网络请求
+  dio: ^5.0.0
+  dio_cookie_manager: ^3.4.0
+  cookie_jar: ^4.0.9
+  crypto: ^3.0.7
+  # 本地存储
+  shared_preferences: ^2.3.0
+  path_provider: ^2.1.5
+  # HTML 解析
+  html: ^0.15.0
+  # 状态管理
+  provider: ^6.1.0
+  # 路由
+  go_router: ^14.0.0
+  # 图片
+  cached_network_image: ^3.4.0
+  image_picker: ^1.1.0
+  # HTML 渲染
+  flutter_html: ^3.0.0
+  # URL 启动
+  url_launcher: ^6.3.0
+  # 收藏动画
+  flutter_widget_from_html: ^0.15.0
+  # 日志
+  talker: ^4.7.0
+  talker_dio_logger: ^4.7.0
+  talker_flutter: ^4.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

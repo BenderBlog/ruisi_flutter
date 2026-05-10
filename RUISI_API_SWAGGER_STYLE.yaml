@@ -1,0 +1,1865 @@
+openapi: 3.0.3
+info:
+  title: Ruisi Discuz Gateway API
+  version: 1.0.0
+  description: |
+    这是一个面向 Ruisi Android 客户端的 Swagger / OpenAPI 风格接口文档。
+
+    重要说明：
+
+    1. Ruisi 的后端主体是 Discuz 页面接口，不是标准 REST 服务。
+    2. Discuz 大量通过 query 参数区分业务，例如 `/forum.php?mod=viewthread&tid=...`。
+    3. OpenAPI 不适合同一路径下通过多组 query 组合表达多套业务，所以本文档采用“逻辑路径”建模。
+    4. 每个 operation 通过 `x-ruisi-origin` 标出真实请求方法、真实文件路径和真实 query 模板。
+    5. 大多数响应是 `text/html`、`text/plain` 或 Ajax HTML，不是 JSON。
+    6. 客户端很多提交操作依赖 Cookie 和 `formhash`，并且常常先 GET 表单页，再 POST 提交。
+
+servers:
+  - url: https://rs.xidian.edu.cn
+    description: 主论坛服务
+  - url: https://rs-api.xidian.edu.cn
+    description: 独立 API / 头像服务
+
+tags:
+  - name: Auth
+    description: 登录、验证码、找回密码
+  - name: Forums
+    description: 板块、子版块、首页导读
+  - name: Threads
+    description: 帖子列表、帖子详情、收藏、发帖、回复、编辑
+  - name: Messages
+    description: 回复通知、@我、私信会话
+  - name: Users
+    description: 用户资料、好友关系
+  - name: Upload
+    description: 图片上传、附件下载
+  - name: Moderation
+    description: 删帖、警告、屏蔽、关闭主题
+  - name: Search
+    description: 搜索
+  - name: Sign
+    description: 签到
+  - name: MobileAPI
+    description: Discuz mobile JSON API，当前客户端主流程较少使用
+
+components:
+  securitySchemes:
+    ruisiCookieAuth:
+      type: apiKey
+      in: cookie
+      name: DiscuzCookie
+      description: |
+        客户端真实使用的是 Discuz 动态 cookie 键，例如包含 `_2132_` 的多个键值。
+        文档中统一抽象为 `ruisiCookieAuth`。
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: 页码，从 1 开始
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Fid:
+      name: fid
+      in: path
+      required: true
+      description: 板块 ID
+      schema:
+        type: integer
+    Tid:
+      name: tid
+      in: path
+      required: true
+      description: 主题 ID
+      schema:
+        type: string
+    Pid:
+      name: pid
+      in: path
+      required: true
+      description: 帖子 / 回复 ID
+      schema:
+        type: string
+    Uid:
+      name: uid
+      in: path
+      required: true
+      description: 用户 ID
+      schema:
+        type: string
+    SearchId:
+      name: searchId
+      in: path
+      required: true
+      description: 搜索结果 ID
+      schema:
+        type: string
+    MobileMode:
+      name: mobile
+      in: query
+      description: 手机版页面标记，客户端常用固定值 2
+      schema:
+        type: integer
+        enum: [2]
+
+  schemas:
+    HtmlResponse:
+      type: string
+      description: Discuz 页面 HTML
+      example: "<html><body><div class=\"threadlist\">...</div></body></html>"
+
+    AjaxHtmlResponse:
+      type: string
+      description: Discuz Ajax HTML 片段，常用于表单提交返回
+      example: "<root><![CDATA[<div class=\"jump_c\"><p>操作成功</p></div>]]></root>"
+
+    PlainTextResponse:
+      type: string
+      description: 文本响应，常见于上传图片返回、部分 Ajax 返回
+      example: "DISCUZUPLOAD|0|123456|0"
+
+    LoginSubmitRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        fastloginfield:
+          type: string
+          default: username
+        cookietime:
+          type: string
+          default: "2592000"
+        username:
+          type: string
+        password:
+          type: string
+        questionid:
+          type: string
+          description: 安全提问编号，未启用时一般传 0
+        answer:
+          type: string
+        seccodehash:
+          type: string
+        seccodeverify:
+          type: string
+
+    SearchSubmitRequest:
+      type: object
+      required:
+        - searchsubmit
+        - srchtxt
+      properties:
+        searchsubmit:
+          type: string
+          example: "yes"
+        srchtxt:
+          type: string
+          example: "测试"
+
+    NewThreadRequest:
+      type: object
+      required:
+        - topicsubmit
+        - subject
+        - message
+      properties:
+        topicsubmit:
+          type: string
+          example: "yes"
+        typeid:
+          type: string
+          description: 主题分类 ID，可选
+        subject:
+          type: string
+        message:
+          type: string
+        formhash:
+          type: string
+          description: Discuz 隐藏字段，客户端通常自动注入
+        seccodehash:
+          type: string
+        seccodeverify:
+          type: string
+        attachments:
+          type: array
+          description: |
+            对应客户端里的 `attachnew[aid]` 动态字段集合。
+          items:
+            type: string
+
+    ReplySubmitRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+        formhash:
+          type: string
+        posttime:
+          type: string
+        noticeauthor:
+          type: string
+        noticetrimstr:
+          type: string
+        reppid:
+          type: string
+        reppost:
+          type: string
+        noticeauthormsg:
+          type: string
+        inajax:
+          type: string
+          example: "1"
+
+    EditPostRequest:
+      type: object
+      required:
+        - subject
+        - message
+      properties:
+        subject:
+          type: string
+        message:
+          type: string
+        typeid:
+          type: string
+        formhash:
+          type: string
+        editsubmit:
+          type: string
+          example: "yes"
+
+    FavoriteThreadRequest:
+      type: object
+      properties:
+        favoritesubmit:
+          type: string
+          example: "true"
+        formhash:
+          type: string
+
+    AddFriendRequest:
+      type: object
+      required:
+        - addsubmit
+        - handlekey
+      properties:
+        addsubmit:
+          type: string
+          example: "true"
+        handlekey:
+          type: string
+          example: "friend_252553"
+        note:
+          type: string
+        gid:
+          type: string
+          example: "1"
+        addsubmit_btn:
+          type: string
+          example: "true"
+        formhash:
+          type: string
+
+    RemoveFriendRequest:
+      type: object
+      properties:
+        friendsubmit:
+          type: string
+          example: "true"
+        formhash:
+          type: string
+
+    SendPmRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+        formhash:
+          type: string
+        pmsubmit:
+          type: string
+          example: "yes"
+        daterange:
+          type: string
+          example: "0"
+
+    UploadImageRequest:
+      type: object
+      required:
+        - uid
+        - hash
+        - Filedata
+      properties:
+        uid:
+          type: string
+        hash:
+          type: string
+        Filedata:
+          type: string
+          format: binary
+
+    SignSubmitRequest:
+      type: object
+      properties:
+        qdxq:
+          type: string
+          description: 心情选项
+        qdmode:
+          type: string
+        todaysay:
+          type: string
+        fastreply:
+          type: string
+        formhash:
+          type: string
+        qdsubmit:
+          type: string
+          example: "1"
+
+    ModerationRequest:
+      type: object
+      description: 管理操作表单。字段通常先从返回 HTML 的表单中提取，再补充 reason、operations 等字段。
+      properties:
+        formhash:
+          type: string
+        handlekey:
+          type: string
+        reason:
+          type: string
+        redirect:
+          type: string
+        operations[]:
+          type: string
+        topiclist[]:
+          type: string
+        moderate[]:
+          type: string
+        warned:
+          type: string
+        banned:
+          type: string
+        expirationclose:
+          type: string
+
+    MobileApiForumdisplayResponse:
+      type: object
+      properties:
+        Variables:
+          type: object
+          properties:
+            forum_threadlist:
+              type: array
+              items:
+                type: object
+                properties:
+                  tid:
+                    type: string
+                  subject:
+                    type: string
+                  author:
+                    type: string
+                  authorid:
+                    type: string
+                  views:
+                    type: string
+                  replies:
+                    type: string
+                  dateline:
+                    type: string
+                  displayorder:
+                    type: integer
+
+paths:
+  /auth/login/page:
+    get:
+      tags: [Auth]
+      summary: 获取登录页与登录表单元数据
+      description: |
+        获取登录页 HTML，用于提取：
+
+        - 登录提交地址
+        - `formhash`
+        - 验证码是否存在
+        - `seccodehash`
+        - 验证码图片地址
+      operationId: getLoginPage
+      x-ruisi-origin:
+        method: GET
+        path: /member.php
+        query:
+          mod: logging
+          action: login
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/LoginActivity.java:183
+      responses:
+        "200":
+          description: 登录页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /auth/login/submit:
+    post:
+      tags: [Auth]
+      summary: 提交登录
+      description: |
+        提交登录表单。成功后客户端会继续从 HTML 中提取：
+
+        - uid
+        - 用户名
+        - 用户组 / 等级
+        - formhash
+      operationId: submitLogin
+      x-ruisi-origin:
+        method: POST
+        path: /member.php
+        query:
+          mod: logging
+          action: login
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/LoginActivity.java:224
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/LoginSubmitRequest"
+      responses:
+        "200":
+          description: 登录结果 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /auth/password/forgot:
+    post:
+      tags: [Auth]
+      summary: 提交找回密码
+      description: 提交 Discuz 找回密码表单。
+      operationId: submitForgotPassword
+      x-ruisi-origin:
+        method: POST
+        path: /member.php
+        query:
+          mod: lostpasswd
+          lostpwsubmit: "yes"
+          inajax: 1
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/ForgetPasswordActivity.java:91
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                email:
+                  type: string
+                formhash:
+                  type: string
+      responses:
+        "200":
+          description: 找回密码返回结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /auth/seccode/check:
+    get:
+      tags: [Auth]
+      summary: 校验验证码
+      operationId: checkSecCode
+      x-ruisi-origin:
+        method: GET
+        path: /misc.php
+        query:
+          mod: seccode
+          action: check
+          inajax: 1
+          idhash: "{seccodehash}"
+          secverify: "{userInput}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/widget/InputValidDialog.java:122
+      parameters:
+        - name: seccodehash
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: secverify
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 验证码校验结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /auth/seccode/update:
+    get:
+      tags: [Auth]
+      summary: 刷新验证码元数据
+      operationId: updateSecCode
+      x-ruisi-origin:
+        method: GET
+        path: /misc.php
+        query:
+          mod: seccode
+          action: update
+          idhash: "{seccodehash}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/widget/InputValidDialog.java:148
+      parameters:
+        - name: seccodehash
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 验证码刷新结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /forums/{fid}/threads:
+    get:
+      tags: [Forums, Threads]
+      summary: 获取板块帖子列表
+      description: |
+        获取指定板块的帖子列表。
+
+        客户端会根据网络环境选择两种真实调用：
+
+        - 校园网：PC 页结构
+        - 外网：`mobile=2` 手机版结构
+      operationId: getForumThreads
+      x-ruisi-origin:
+        method: GET
+        variants:
+          - path: /forum.php
+            query:
+              mod: forumdisplay
+              fid: "{fid}"
+              page: "{page}"
+          - path: /forum.php
+            query:
+              mod: forumdisplay
+              fid: "{fid}"
+              page: "{page}"
+              mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostsActivity.java:208
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:20
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 板块列表 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /forums/guide:
+    get:
+      tags: [Forums]
+      summary: 获取新帖 / 热帖导读页
+      operationId: getGuideThreads
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: guide
+          view: "{new|hot}"
+          page: "{page}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/fragment/FrageHotsNews.java:145
+      parameters:
+        - name: view
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [new, hot]
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 导读页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /threads/{tid}:
+    get:
+      tags: [Threads]
+      summary: 获取帖子详情页
+      description: |
+        获取帖子详情正文和评论列表。外网常追加 `mobile=2`。
+      operationId: getThreadDetail
+      x-ruisi-origin:
+        method: GET
+        variants:
+          - path: /forum.php
+            query:
+              mod: viewthread
+              tid: "{tid}"
+              page: "{page}"
+          - path: /forum.php
+            query:
+              mod: viewthread
+              tid: "{tid}"
+              page: "{page}"
+              mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:382
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 帖子详情 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /threads/{tid}/redirect-target:
+    head:
+      tags: [Threads]
+      summary: 解析指定楼层跳转的真实页码
+      description: |
+        当客户端打开 `redirect&goto=findpost` 形式的链接时，会先发 HEAD 请求，根据 Location 解析真实 page。
+      operationId: resolveThreadRedirectPage
+      x-ruisi-origin:
+        method: HEAD
+        path: /forum.php
+        query:
+          mod: redirect
+          goto: findpost
+          ptid: "{tid}"
+          pid: "{pid}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:160
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Pid"
+      responses:
+        "200":
+          description: 返回 Location 或最终跳转信息
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainTextResponse"
+
+  /threads/{tid}/favorite:
+    post:
+      tags: [Threads]
+      summary: 收藏帖子
+      operationId: favoriteThread
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /home.php
+        query:
+          mod: spacecp
+          ac: favorite
+          type: thread
+          id: "{tid}"
+          mobile: 2
+          handlekey: favbtn
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:901
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:96
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/FavoriteThreadRequest"
+      responses:
+        "200":
+          description: 收藏结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /threads/{fid}/new/validate:
+    get:
+      tags: [Threads]
+      summary: 检查发帖规则与验证码需求
+      operationId: checkNewThreadRule
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: ajax
+          action: checkpostrule
+          ac: newthread
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/NewPostActivity.java:224
+        - app/src/main/java/me/yluo/ruisiapp/App.java:242
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+      responses:
+        "200":
+          description: 发帖规则检查结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /threads/{fid}/new/page:
+    get:
+      tags: [Threads]
+      summary: 获取发帖页元数据
+      description: |
+        用于提取：
+
+        - 可选主题分类 `typeid`
+        - 上传图片所需 `uploadHash`
+      operationId: getNewThreadPage
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: post
+          action: newthread
+          fid: "{fid}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/NewPostActivity.java:406
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+      responses:
+        "200":
+          description: 发帖页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /threads/{fid}/new/submit:
+    post:
+      tags: [Threads]
+      summary: 提交新主题
+      operationId: submitNewThread
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /forum.php
+        query:
+          mod: post
+          action: newthread
+          fid: "{fid}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/NewPostActivity.java:261
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/NewThreadRequest"
+      responses:
+        "200":
+          description: 发帖结果 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /threads/{tid}/reply/form:
+    get:
+      tags: [Threads]
+      summary: 获取回复层主表单
+      description: |
+        当回复某一层而不是楼主时，客户端会先打开这一层的 `replyUrl`，再抽取 `postform` 隐藏字段。
+      operationId: getReplyForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        dynamicUrl: true
+        note: 实际 URL 来自帖子详情页中每条评论的 replyUrl
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1186
+        - app/src/main/java/me/yluo/ruisiapp/activity/ReplyCzActivity.java:103
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      responses:
+        "200":
+          description: 回复表单 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /threads/{tid}/reply/submit:
+    post:
+      tags: [Threads]
+      summary: 提交回复
+      description: |
+        提交回复楼主或回复层主。
+
+        实际提交地址可能是：
+
+        - 主题详情页中的 `fastpostform action`
+        - 某层评论 reply 表单 action
+      operationId: submitReply
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        dynamicUrl: true
+        note: 实际 URL 从帖子详情页或回复表单页中提取
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1169
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1212
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ReplySubmitRequest"
+      responses:
+        "200":
+          description: 回复结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /threads/{tid}/edit/form:
+    get:
+      tags: [Threads]
+      summary: 获取编辑页表单
+      operationId: getEditThreadForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: post
+          action: edit
+          tid: "{tid}"
+          pid: "{pid}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/EditActivity.java:136
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Pid"
+      responses:
+        "200":
+          description: 编辑页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /threads/{tid}/edit/submit:
+    post:
+      tags: [Threads]
+      summary: 提交编辑
+      operationId: submitEditThread
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /forum.php
+        query:
+          mod: post
+          action: edit
+          extra: ""
+          editsubmit: "yes"
+          mobile: 2
+          handlekey: postform
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/EditActivity.java:178
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/EditPostRequest"
+      responses:
+        "200":
+          description: 编辑结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /messages/notices:
+    get:
+      tags: [Messages]
+      summary: 获取回复通知
+      operationId: getReplyNotices
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          do: notice
+          mobile: 2
+          page: "{page}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/fragment/FrageMessage.java:186
+      parameters:
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 通知页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /messages/mentions:
+    get:
+      tags: [Messages]
+      summary: 获取 @我 通知
+      operationId: getMentionNotices
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          do: notice
+          view: mypost
+          type: at
+          mobile: 2
+          page: "{page}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/fragment/FrageMessage.java:190
+      parameters:
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: "@我 通知页 HTML"
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /messages/pm/list:
+    get:
+      tags: [Messages]
+      summary: 获取私信会话列表
+      operationId: getPmSessions
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          do: pm
+          mobile: 2
+          page: "{page}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/fragment/FrageMessage.java:188
+      parameters:
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 私信会话页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /messages/pm/session:
+    get:
+      tags: [Messages]
+      summary: 获取与指定用户的私信聊天页
+      operationId: getPmSessionDetail
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          do: pm
+          subop: view
+          touid: "{uid}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/UserDetailActivity.java:224
+        - app/src/main/java/me/yluo/ruisiapp/activity/ChatActivity.java:116
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+      responses:
+        "200":
+          description: 聊天页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /messages/pm/send:
+    post:
+      tags: [Messages]
+      summary: 发送私信
+      description: |
+        实际发送地址通常来自聊天页里的 `form#pmform action`。
+        当页面未给出完整 action 时，客户端会按 `pmid/touid` 拼出默认发送 URL。
+      operationId: sendPm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        dynamicUrl: true
+        example:
+          path: /home.php
+          query:
+            mod: spacecp
+            ac: pm
+            op: send
+            pmid: "{uid}"
+            daterange: 0
+            pmsubmit: "yes"
+            mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/ChatActivity.java:128
+        - app/src/main/java/me/yluo/ruisiapp/activity/ChatActivity.java:215
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SendPmRequest"
+      responses:
+        "200":
+          description: 私信发送结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /users/{uid}/profile:
+    get:
+      tags: [Users]
+      summary: 获取用户资料页
+      operationId: getUserProfile
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          uid: "{uid}"
+          do: profile
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/UserDetailActivity.java:180
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:90
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+      responses:
+        "200":
+          description: 用户资料页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /users/avatar:
+    get:
+      tags: [Users]
+      summary: 获取用户头像
+      operationId: getUserAvatar
+      x-ruisi-origin:
+        method: GET
+        server: https://rs-api.xidian.edu.cn
+        path: /ucenter/avatar.php
+        query:
+          uid: "{uid}"
+          size: "{small|middle|big}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:61
+      parameters:
+        - name: uid
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: size
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [small, middle, big]
+      responses:
+        "200":
+          description: 头像图片二进制流
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+
+  /friends:
+    get:
+      tags: [Users]
+      summary: 获取好友列表
+      operationId: getFriends
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          mod: space
+          do: friend
+          mobile: 2
+          page: "{page}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/FriendActivity.java:102
+      parameters:
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 好友列表页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /friends/search:
+    get:
+      tags: [Users, Search]
+      summary: 搜索好友 / 用户
+      operationId: searchFriends
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /home.php
+        query:
+          username: "{keyword}"
+          searchsubmit: "true"
+          op: ""
+          mod: spacecp
+          ac: search
+          type: all
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/FriendActivity.java:203
+      parameters:
+        - name: keyword
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 搜索用户 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /friends/{uid}/add:
+    post:
+      tags: [Users]
+      summary: 发送加好友请求
+      operationId: addFriend
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        variants:
+          - path: /home.php
+            query:
+              mod: spacecp
+              ac: friend
+              op: add
+              uid: "{uid}"
+              inajax: 1
+          - path: /home.php
+            query:
+              mod: spacecp
+              ac: friend
+              op: add
+              uid: "{uid}"
+              inajax: 1
+              mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/UserDetailActivity.java:245
+        - app/src/main/java/me/yluo/ruisiapp/activity/FriendActivity.java:149
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AddFriendRequest"
+      responses:
+        "200":
+          description: 加好友请求结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /friends/{uid}/remove:
+    post:
+      tags: [Users]
+      summary: 删除好友
+      operationId: removeFriend
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /home.php
+        query:
+          mod: spacecp
+          ac: friend
+          op: ignore
+          uid: "{uid}"
+          confirm: 1
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/FriendActivity.java:314
+      parameters:
+        - $ref: "#/components/parameters/Uid"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/RemoveFriendRequest"
+      responses:
+        "200":
+          description: 删除好友结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /search/forum/submit:
+    post:
+      tags: [Search]
+      summary: 发起论坛搜索
+      operationId: submitForumSearch
+      x-ruisi-origin:
+        method: POST
+        path: /search.php
+        query:
+          mod: forum
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/SearchActivity.java:135
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SearchSubmitRequest"
+      responses:
+        "200":
+          description: 搜索结果页 HTML，第一页里通常带 searchid
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /search/forum/result/{searchId}:
+    get:
+      tags: [Search]
+      summary: 翻页获取搜索结果
+      operationId: getForumSearchResult
+      x-ruisi-origin:
+        method: GET
+        path: /search.php
+        query:
+          mod: forum
+          searchid: "{searchId}"
+          orderby: lastpost
+          ascdesc: desc
+          searchsubmit: "yes"
+          kw: "{keyword}"
+          page: "{page}"
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/SearchActivity.java:163
+      parameters:
+        - $ref: "#/components/parameters/SearchId"
+        - name: keyword
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 搜索结果页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /social/at-users:
+    get:
+      tags: [Users]
+      summary: 获取可 @ 用户列表
+      operationId: getAtUserList
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /misc.php
+        query:
+          mod: getatuser
+          inajax: 1
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/widget/MyFriendPicker.java:98
+      responses:
+        "200":
+          description: "@ 用户列表 HTML / 文本结果"
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /upload/image:
+    post:
+      tags: [Upload]
+      summary: 上传帖子图片
+      description: |
+        上传接口依赖发帖页中提取的 `uploadHash`。
+        客户端会先本地压缩图片，再用 multipart/form-data 提交。
+      operationId: uploadThreadImage
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /misc.php
+        query:
+          mod: swfupload
+          operation: upload
+          type: image
+          inajax: "yes"
+          infloat: "yes"
+          simple: 2
+          mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/NewPostActivity.java:512
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:126
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadImageRequest"
+      responses:
+        "200":
+          description: 上传返回文本，客户端会从中提取 aid
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/PlainTextResponse"
+
+  /attachments/download:
+    get:
+      tags: [Upload]
+      summary: 下载附件
+      description: |
+        客户端把附件链接交给下载服务处理，真实地址通常直接来自帖子正文链接。
+      operationId: downloadAttachment
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        dynamicUrl: true
+        note: 实际 URL 常见形式为 `forum.php?mod=attachment...`
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/utils/LinkClickHandler.java:59
+        - app/src/main/java/me/yluo/ruisiapp/downloadfile/DownloadService.java:99
+      responses:
+        "200":
+          description: 附件二进制流
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /sign/page:
+    get:
+      tags: [Sign]
+      summary: 获取签到页
+      operationId: getSignPage
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /plugin.php
+        query:
+          id: dsu_paulsign:sign
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/SignActivity.java:87
+      responses:
+        "200":
+          description: 签到页 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/HtmlResponse"
+
+  /sign/submit:
+    post:
+      tags: [Sign]
+      summary: 提交签到
+      operationId: submitSign
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /plugin.php
+        query:
+          id: dsu_paulsign:sign
+          operation: qiandao
+          infloat: 1
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/SignActivity.java:184
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:85
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SignSubmitRequest"
+      responses:
+        "200":
+          description: 签到结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/block/form:
+    get:
+      tags: [Moderation]
+      summary: 获取屏蔽回复表单
+      operationId: getBlockReplyForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: topicadmin
+          action: banpost
+          fid: "{fid}"
+          tid: "{tid}"
+          topiclist[]: "{pid}"
+          mobile: 2
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:921
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Pid"
+      responses:
+        "200":
+          description: 管理表单 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/block/submit:
+    post:
+      tags: [Moderation]
+      summary: 提交屏蔽 / 解除屏蔽
+      operationId: submitBlockReply
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /forum.php
+        query:
+          mod: topicadmin
+          action: banpost
+          modsubmit: "yes"
+          modclick: "yes"
+          mobile: 2
+          handlekey: topicadminform
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1022
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:134
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ModerationRequest"
+      responses:
+        "200":
+          description: 屏蔽操作结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/warn/form:
+    get:
+      tags: [Moderation]
+      summary: 获取警告表单
+      operationId: getWarnForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        path: /forum.php
+        query:
+          mod: topicadmin
+          action: warn
+          fid: "{fid}"
+          tid: "{tid}"
+          topiclist[]: "{pid}"
+          mobile: 2
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:943
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Pid"
+      responses:
+        "200":
+          description: 警告表单 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/warn/submit:
+    post:
+      tags: [Moderation]
+      summary: 提交警告 / 解除警告
+      operationId: submitWarn
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /forum.php
+        query:
+          mod: topicadmin
+          action: warn
+          modsubmit: "yes"
+          modclick: "yes"
+          mobile: 2
+          handlekey: topicadminform
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:997
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:138
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ModerationRequest"
+      responses:
+        "200":
+          description: 警告结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/thread-close/form:
+    get:
+      tags: [Moderation]
+      summary: 获取关闭 / 打开主题表单
+      operationId: getThreadCloseForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        variants:
+          - path: /forum.php
+            query:
+              mod: topicadmin
+              action: moderate
+              fid: "{fid}"
+              moderate[]: "{tid}"
+              handlekey: mods
+              infloat: "yes"
+              nopost: "yes"
+              from: "{tid}"
+              inajax: 1
+          - path: /forum.php
+            query:
+              mod: topicadmin
+              action: moderate
+              fid: "{fid}"
+              moderate[]: "{tid}"
+              from: "{tid}"
+              optgroup: 4
+              mobile: 2
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:974
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Tid"
+      responses:
+        "200":
+          description: 关闭主题表单 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/thread-close/submit:
+    post:
+      tags: [Moderation]
+      summary: 提交关闭 / 打开主题
+      operationId: submitThreadClose
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        path: /forum.php
+        query:
+          mod: topicadmin
+          action: moderate
+          optgroup: 4
+          modsubmit: "yes"
+          mobile: 2
+          handlekey: moderateform
+          inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1050
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:130
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ModerationRequest"
+      responses:
+        "200":
+          description: 关闭 / 打开主题结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/delete/form:
+    get:
+      tags: [Moderation]
+      summary: 获取删帖 / 删回复表单
+      operationId: getDeleteForm
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: GET
+        dynamicLogic: true
+        variants:
+          - subjectDelete:
+              path: /forum.php
+              query:
+                mod: topicadmin
+                action: moderate
+                fid: "{fid}"
+                moderate[]: "{tid}"
+                operation: delete
+                optgroup: 3
+                from: "{tid}"
+                mobile: 2
+                inajax: 1
+          - replyDelete:
+              path: /forum.php
+              query:
+                mod: topicadmin
+                action: delpost
+                fid: "{fid}"
+                tid: "{tid}"
+                topiclist[]: "{pid}"
+                mobile: 2
+                inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1083
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Pid"
+      responses:
+        "200":
+          description: 删除表单 HTML
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /moderation/delete/submit:
+    post:
+      tags: [Moderation]
+      summary: 提交删帖 / 删回复
+      operationId: submitDelete
+      security:
+        - ruisiCookieAuth: []
+      x-ruisi-origin:
+        method: POST
+        dynamicLogic: true
+        variants:
+          - deleteThread:
+              path: /forum.php
+              query:
+                mod: topicadmin
+                action: moderate
+                optgroup: 3
+                modsubmit: "yes"
+                mobile: 2
+                handlekey: moderateform
+                inajax: 1
+          - deleteReply:
+              path: /forum.php
+              query:
+                mod: topicadmin
+                action: delpost
+                modsubmit: "yes"
+                modclick: "yes"
+                mobile: 2
+                handlekey: topicadminform
+                inajax: 1
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostActivity.java:1134
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:100
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ModerationRequest"
+      responses:
+        "200":
+          description: 删除结果
+          content:
+            text/html:
+              schema:
+                $ref: "#/components/schemas/AjaxHtmlResponse"
+
+  /mobile-api/forums/{fid}/threads:
+    get:
+      tags: [MobileAPI]
+      summary: 获取板块帖子列表 JSON
+      description: |
+        这是 Discuz mobile API 形式的 JSON 接口。
+        当前客户端代码中定义了它，但主流程实际很少使用。
+      operationId: getMobileForumThreads
+      x-ruisi-origin:
+        method: GET
+        path: /api/mobile/index.php
+        query:
+          version: 4
+          module: forumdisplay
+          fid: "{fid}"
+          page: "{page}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:28
+        - app/src/main/java/me/yluo/ruisiapp/activity/PostsActivity.java:442
+      parameters:
+        - $ref: "#/components/parameters/Fid"
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: 板块 JSON 列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MobileApiForumdisplayResponse"
+
+  /mobile-api/threads/{tid}:
+    get:
+      tags: [MobileAPI]
+      summary: 获取主题详情 JSON
+      description: 当前客户端定义了 URL，但主流程解析仍以 HTML 详情页为主。
+      operationId: getMobileThreadDetail
+      x-ruisi-origin:
+        method: GET
+        path: /api/mobile/index.php
+        query:
+          version: 4
+          module: viewthread
+          tid: "{tid}"
+          page: "{page}"
+          ppp: "{pageSize}"
+      x-ruisi-source:
+        - app/src/main/java/me/yluo/ruisiapp/utils/UrlUtils.java:32
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+        - $ref: "#/components/parameters/Page"
+        - name: pageSize
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 主题详情 JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
