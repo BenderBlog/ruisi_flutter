@@ -33,13 +33,13 @@ class TopicListItem extends StatelessWidget {
                 width: 40,
                 height: 40,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
+                placeholder: (_, _) => Container(
                   width: 40,
                   height: 40,
                   color: theme.colorScheme.surfaceContainerHighest,
                   child: const Icon(Icons.person, size: 24),
                 ),
-                errorWidget: (_, __, ___) => Container(
+                errorWidget: (_, _, _) => Container(
                   width: 40,
                   height: 40,
                   color: theme.colorScheme.surfaceContainerHighest,
@@ -97,9 +97,14 @@ class TopicListItem extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  // 作者 + 分类
+                  // 底部信息
                   Row(
                     children: [
+                      Icon(
+                        Icons.person,
+                        size: 14,
+                        color: theme.colorScheme.outline,
+                      ),
                       Text(
                         topic.author,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -131,12 +136,7 @@ class TopicListItem extends StatelessWidget {
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  // 底部信息
-                  Row(
-                    children: [
+                      const SizedBox(width: 16),
                       if (topic.lastReplyTime != null) ...[
                         Icon(
                           Icons.access_time,
@@ -150,8 +150,8 @@ class TopicListItem extends StatelessWidget {
                             color: theme.colorScheme.outline,
                           ),
                         ),
+                        const SizedBox(width: 16),
                       ],
-                      const SizedBox(width: 16),
                       Icon(
                         Icons.chat_bubble_outline,
                         size: 14,

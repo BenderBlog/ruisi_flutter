@@ -48,7 +48,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
               onRefresh: () async => app.loadFavorites(refresh: true),
               child: ListView.separated(
                 itemCount: app.favorites.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (_, i) {
                   final topic = app.favorites[i];
                   return TopicListItem(

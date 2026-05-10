@@ -171,7 +171,7 @@ class _TopicDetailPageState extends State<TopicDetailPage> {
                     child: ListView.separated(
                       controller: _scrollCtrl,
                       itemCount: (_detail.posts?.length ?? 0) + 2,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (_, i) {
                         if (i == 0) {
                           return Padding(
@@ -224,7 +224,7 @@ class _TopicDetailPageState extends State<TopicDetailPage> {
                       color: theme.colorScheme.surface,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
+                          color: Colors.black.withValues(alpha: 0.9),
                           blurRadius: 4,
                           offset: const Offset(0, -2),
                         ),
@@ -323,7 +323,7 @@ class _PostItem extends StatelessWidget {
           const SizedBox(height: 8),
           Html(
             data: post.content,
-            onLinkTap: (url, _, __) {
+            onLinkTap: (url, _, _) {
               if (url != null) launchUrl(Uri.parse(url));
             },
           ),
@@ -343,10 +343,10 @@ class _PostItem extends StatelessWidget {
                               child: CachedNetworkImage(
                                 imageUrl: img.url,
                                 fit: BoxFit.contain,
-                                placeholder: (_, __) => const Center(
+                                placeholder: (_, _) => const Center(
                                   child: CircularProgressIndicator(),
                                 ),
-                                errorWidget: (_, __, ___) =>
+                                errorWidget: (_, _, _) =>
                                     const Icon(Icons.broken_image),
                               ),
                             ),
@@ -358,12 +358,12 @@ class _PostItem extends StatelessWidget {
                         width: 100,
                         height: 100,
                         fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(
+                        placeholder: (_, _) => Container(
                           width: 100,
                           height: 100,
                           color: theme.colorScheme.surfaceContainerHighest,
                         ),
-                        errorWidget: (_, __, ___) => Container(
+                        errorWidget: (_, _, _) => Container(
                           width: 100,
                           height: 100,
                           color: theme.colorScheme.surfaceContainerHighest,

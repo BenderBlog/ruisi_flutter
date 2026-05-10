@@ -102,15 +102,23 @@ class ApiService {
   }
 
   /// 登录
-  Future<bool> login(
+  ///
+  /// 采用方案 A（与 iOS 原版 LoginViewController 一致）：
+  /// 直接检查 POST 响应中是否包含 "欢迎您回来"，
+  /// 然后用正则从响应中提取 uid/用户名/formhash。
+  /// 无需额外网络请求，不受移动端/桌面端页面结构差异影响。
+  ///
+  /// 返回 (成功?, 错误信息)
+  Future<(bool, String?)> login(
     String username,
     String password, {
     String? seccodeHash,
     String? seccodeVerify,
   }) async {
+    // Step 1: 获取登录页，提取 formhash 和 loginhash
     final (webpageOk, webpage) = await _api.get(Urls.loginUrl);
 
-    if (!webpageOk) return false;
+    if (!webpageOk) return (false, '无法访问登录页面');
 
     var document = html_parser.parse(webpage);
 
@@ -123,7 +131,9 @@ class ApiService {
     String loginhash =
         RegExp(r'loginhash=(\w+)').firstMatch(action ?? '')?.group(1) ?? '';
 
-    if (formhash == null || loginhash.isEmpty) return false;
+    if (formhash == null || loginhash.isEmpty) {
+      return (false, '无法解析登录表单');
+    }
 
     final params = <String, dynamic>{
       'formhash': formhash,
@@ -142,46 +152,112 @@ class ApiService {
       params['seccodeverify'] = seccodeVerify;
     }
 
+    // Step 2: POST 登录请求
     final (ok, body) = await _api.post(
       "${Urls.loginUrl}&loginsubmit=yes&loginhash=$loginhash&inajax=1",
       params: params,
     );
 
-    if (!ok) return false;
+    if (!ok) return (false, '登录请求失败');
 
-    // 登录后通过桌面端方式检查 uid
-    final (checkOk, checkBody) = await _api.get(Urls.checkLoginUrl);
+    // Step 3: 直接解析 POST 响应（方案 A，与 iOS 原版一致）
+    // iOS 参考：LoginViewController.swift#loginClick -> loginResult
+    if (body.contains('欢迎您回来')) {
+      // 登录成功，从响应中提取用户信息
+      // 响应格式示例：
+      //   <p>欢迎您回来，<font color="#0099FF">实习版主</font> 激萌路小叔，现在将转入登录前页面</p>
+      //   或：<p>欢迎您回来，实习版主 激萌路小叔，现在将转入登录前页面</p>
+      //   以及包含 home.php?mod=space&uid=XXX 和 formhash=XXXX 的链接
+      // 提取 formhash（用于后续 API 调用）
+      final formhashMatch = RegExp(r'formhash=(\w{6,8})').firstMatch(body);
+      final newFormhash = formhashMatch?.group(1);
 
-    if (!checkOk) return false;
+      // 提取用户名（从"欢迎您回来"后的内容中）
+      String uname = username;
+      final welcomeMatch = RegExp(r'欢迎您回来[，,]\s*(.+)').firstMatch(body);
+      if (welcomeMatch != null) {
+        final welcomeText = welcomeMatch.group(1)!;
+        // 去掉 HTML 标签，取最后的用户名部分
+        final cleanText = welcomeText
+            .replaceAll(RegExp(r'<[^>]+>'), ' ')
+            .trim();
+        final parts = cleanText.split(RegExp(r'[，,\s]+'));
+        if (parts.isNotEmpty) uname = parts.last.trim();
+      }
 
-    // 桌面端登录检查：如果响应中不包含 "succeed"，说明登录失败
-    // 重新访问登录页获取用户信息
-    final (pageOk, pageBody) = await _api.get(Urls.loginUrl);
-    if (!pageOk) return false;
+      // 提取 uid：先从响应中找
+      int uid = 0;
+      final uidMatch = RegExp(
+        r'home\.php\?mod=space[&\w=]*uid=(\d+)',
+      ).firstMatch(body);
+      if (uidMatch != null) {
+        uid = int.parse(uidMatch.group(1)!);
+      }
 
-    final checkDoc = html_parser.parse(pageBody);
-    // 桌面端登录成功后，页面顶部会显示用户名和退出链接
-    final userLink = checkDoc.querySelector('.vwmy a[href*="space"]');
-    final logoutLink = checkDoc.querySelector('a[href*="action=logout"]');
+      // Fallback: AJAX 响应可能不含 uid 链接，访问用户空间页面获取
+      if (uid == 0) {
+        _api.talker.info('响应中未找到 uid，尝试从用户空间页面获取...');
+        final (spaceOk, spaceBody) = await _api.get(
+          '${Urls.baseUrl}home.php?mod=space',
+        );
+        if (spaceOk) {
+          // 格式1: home.php?mod=space&uid=XXX
+          final spaceUid = RegExp(
+            r'home\.php\?mod=space[&\w=]*uid=(\d+)',
+          ).firstMatch(spaceBody);
+          if (spaceUid != null) {
+            uid = int.parse(spaceUid.group(1)!);
+          }
+          // 格式2: space-uid-XXX.html
+          if (uid == 0) {
+            final altUid = RegExp(r'space-uid-(\d+)').firstMatch(spaceBody);
+            if (altUid != null) {
+              uid = int.parse(altUid.group(1)!);
+            }
+          }
+          // 格式3: JSON "uid": XXX
+          if (uid == 0) {
+            final jsonUid = RegExp(r'"uid"\s*:\s*(\d+)').firstMatch(spaceBody);
+            if (jsonUid != null) {
+              uid = int.parse(jsonUid.group(1)!);
+            }
+          }
+        }
+      }
 
-    if (userLink != null || logoutLink != null) {
-      // 从页面提取 uid
-      final href = userLink?.attributes['href'] ?? '';
-      final uidMatch = RegExp(r'uid=(\d+)').firstMatch(href);
-      final uid = uidMatch != null ? int.parse(uidMatch.group(1)!) : 0;
-      final uname = userLink?.text.trim() ?? username;
+      _api.talker.info(
+        '登录成功: uid=$uid, username=$uname, formhash=${newFormhash ?? _api.formhash}',
+      );
 
       if (uid > 0) {
         await _settings.saveLogin(
           uid: uid,
-          username: uname,
-          formhash: _api.formhash ?? '',
+          username: username,
+          formhash: newFormhash ?? _api.formhash ?? '',
           password: password,
         );
-        return true;
+      } else {
+        _api.talker.warning('无法获取 uid，saveLogin 未执行！');
       }
+      return (true, null);
+    } else if (body.contains('验证码填写错误')) {
+      return (false, '验证码填写错误');
+    } else if (body.contains('登录失败') && body.contains('您还可以尝试')) {
+      final errorMatch = RegExp(r'登录失败.*?</p>', dotAll: true).firstMatch(body);
+      final errorText = errorMatch?.group(0) ?? '登录失败';
+      final cleanError = errorText.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+      return (false, cleanError);
+    } else if (body.contains('密码错误次数过多')) {
+      final errorMatch = RegExp(
+        r'密码错误次数过多.*?</p>',
+        dotAll: true,
+      ).firstMatch(body);
+      final errorText = errorMatch?.group(0) ?? '密码错误次数过多';
+      final cleanError = errorText.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+      return (false, cleanError);
+    } else {
+      return (false, '账号或密码错误');
     }
-    return false;
   }
 
   // =========================================================================
@@ -606,7 +682,7 @@ class ApiService {
 
     final (ok, body) = await _api.post(
       Urls.signPostUrl,
-      params: {'qdxq': 'kx', 'qdmode': '1', 'todaysay': '', 'faession': '1'},
+      params: {'qdxq': 'kx', 'qdmode': '1', 'todaysay': '', 'fastreply': '0'},
     );
 
     if (!ok) return SignResult(message: '签到请求失败');

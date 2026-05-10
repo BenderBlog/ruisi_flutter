@@ -22,6 +22,7 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordCtrl = TextEditingController();
   final _captchaCtrl = TextEditingController();
   bool _obscure = true;
+  bool _resetting = false;
 
   @override
   void initState() {
@@ -38,6 +39,15 @@ class _LoginPageState extends State<LoginPage> {
     _passwordCtrl.dispose();
     _captchaCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _resetLoginState() async {
+    setState(() => _resetting = true);
+    _usernameCtrl.clear();
+    _passwordCtrl.clear();
+    _captchaCtrl.clear();
+    await context.read<AppProvider>().resetLoginState();
+    if (mounted) setState(() => _resetting = false);
   }
 
   Future<void> _doLogin() async {
@@ -68,9 +78,15 @@ class _LoginPageState extends State<LoginPage> {
         (route) => false,
       );
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('登录失败，请检查用户名和密码')));
+      final errorMsg = app.loginError ?? '登录失败，请检查用户名和密码';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
       // 登录失败后刷新验证码
       _captchaCtrl.clear();
       context.read<AppProvider>().refreshCaptcha();
@@ -186,6 +202,23 @@ class _LoginPageState extends State<LoginPage> {
                           : const Text('登录'),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  // 重置登录状态
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: _resetting ? null : _resetLoginState,
+                      icon: _resetting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh),
+                      label: const Text('重置登录状态'),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -296,7 +329,7 @@ class _CaptchaWidget extends StatelessWidget {
         imageBytes!,
         fit: BoxFit.contain,
         gaplessPlayback: true, // 防止刷新时闪烁
-        errorBuilder: (_, __, ___) => Center(
+        errorBuilder: (_, _, _) => Center(
           child: Icon(Icons.broken_image, color: colorScheme.error, size: 24),
         ),
       );

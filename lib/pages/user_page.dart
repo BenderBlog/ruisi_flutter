@@ -77,7 +77,7 @@ class _UserPageState extends State<UserPage>
                   onRefresh: () async => app.loadMyTopics(refresh: true),
                   child: ListView.separated(
                     itemCount: app.myTopics.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final topic = app.myTopics[i];
                       return TopicListItem(

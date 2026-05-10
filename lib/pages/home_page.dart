@@ -143,7 +143,7 @@ class _HomePageState extends State<HomePage>
       onRefresh: () async => onRefresh?.call(),
       child: ListView.separated(
         itemCount: topics.length + (onLoadMore != null ? 1 : 0),
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (_, i) {
           if (i == topics.length) {
             // 加载更多
@@ -236,7 +236,7 @@ class _HomePageState extends State<HomePage>
           title: const Text('每日签到'),
           onTap: () async {
             await app.sign();
-            if (!mounted) return;
+            if (!context.mounted) return;
             final msg = app.signResult?.message ?? '签到完成';
             ScaffoldMessenger.of(
               context,

@@ -77,7 +77,7 @@ class _SearchPageState extends State<SearchPage> {
               onRefresh: () async => _doSearch(),
               child: ListView.separated(
                 itemCount: app.searchResults.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (_, i) {
                   final topic = app.searchResults[i];
                   return TopicListItem(

@@ -31,7 +31,7 @@ class AboutPage extends StatelessWidget {
                 'assets/images/app_logo.png',
                 width: 80,
                 height: 80,
-                errorBuilder: (_, __, ___) =>
+                errorBuilder: (_, _, _) =>
                     const Icon(Icons.forum, size: 80, color: Colors.blue),
               ),
             ),

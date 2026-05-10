@@ -81,7 +81,7 @@ class _MessagesPageState extends State<MessagesPage>
       onRefresh: () async => app.loadMessages(),
       child: ListView.separated(
         itemCount: items.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (_, i) {
           final item = items[i];
           return ListTile(
@@ -114,7 +114,7 @@ class _MessagesPageState extends State<MessagesPage>
       onRefresh: () async => app.loadMessages(),
       child: ListView.separated(
         itemCount: items.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (_, i) {
           final item = items[i];
           return ListTile(

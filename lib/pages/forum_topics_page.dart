@@ -75,7 +75,7 @@ class _ForumTopicsPageState extends State<ForumTopicsPage> {
               child: ListView.separated(
                 controller: _scrollCtrl,
                 itemCount: topics.length + (app.hasMoreTopics ? 1 : 0),
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (_, i) {
                   if (i == topics.length) {
                     return const Padding(

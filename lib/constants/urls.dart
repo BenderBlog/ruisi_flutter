@@ -101,7 +101,7 @@ class Urls {
         : size == 2
         ? 'big'
         : 'middle';
-    return 'https://rs-api.xidian.edu.cn/ucenter/avatar.php?uid=$uid&size=$sizeStr';
+    return 'https://rs.xidian.edu.cn/uc2_link/avatar.php?uid=$uid&size=$sizeStr';
   }
 
   // ---- 搜索 ----

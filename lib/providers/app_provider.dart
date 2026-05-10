@@ -82,15 +82,28 @@ class AppProvider extends ChangeNotifier {
     return api.verifyCaptcha(_captchaHash!, value);
   }
 
+  /// 重置登录状态：清除 Cookie 并重新获取登录页和验证码
+  Future<void> resetLoginState() async {
+    await api.ruisiApi.clearCookies();
+    _loginError = null;
+    notifyListeners();
+    await checkLoginCaptcha();
+  }
+
+  String? _loginError;
+
+  String? get loginError => _loginError;
+
   Future<bool> login(
     String username,
     String password, {
     String? seccodeVerify,
   }) async {
     _loginLoading = true;
+    _loginError = null;
     notifyListeners();
 
-    final result = await api.login(
+    final (ok, error) = await api.login(
       username,
       password,
       seccodeHash: _captchaHash,
@@ -98,12 +111,30 @@ class AppProvider extends ChangeNotifier {
     );
 
     _loginLoading = false;
+    _loginError = error;
     notifyListeners();
-    return result;
+    return ok;
   }
 
   Future<void> logout() async {
+    // 1. 向服务器发送登出请求（Discuz 退出链接）
+    //    即使失败也要继续清除本地状态
+    try {
+      if (settings.formhash != null) {
+        await api.ruisiApi.get(
+          'member.php?mod=logging&action=logout&formhash=${settings.formhash}',
+        );
+      }
+    } catch (_) {
+      // 忽略网络错误，确保本地状态一定被清除
+    }
+
+    // 2. 清除所有持久化 Cookie 和 formhash
+    await api.ruisiApi.clearCookies();
+
+    // 3. 清除 SharedPreferences 中的登录信息
     await settings.logout();
+
     notifyListeners();
   }
 

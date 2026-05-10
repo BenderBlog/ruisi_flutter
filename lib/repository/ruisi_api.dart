@@ -40,6 +40,9 @@ class RuisiApi {
   /// Talker 日志实例
   final Talker talker;
 
+  /// 持久化 Cookie 存储（退出登录时需要清除）
+  late final PersistCookieJar _cookieJar;
+
   /// 当前代理配置
   bool _proxyEnabled = false;
   String _proxyHost = '';
@@ -61,7 +64,7 @@ class RuisiApi {
         talker: this.talker,
         settings: const TalkerDioLoggerSettings(
           printRequestHeaders: true,
-          printResponseHeaders: false,
+          printResponseHeaders: true,
           printResponseMessage: true,
         ),
       ),
@@ -71,13 +74,12 @@ class RuisiApi {
     _applyProxy();
 
     // Cookie 管理
-    _dio.interceptors.add(
-      CookieManager(
-        PersistCookieJar(storage: FileStorage('$cookiePath/.cookies/')),
-      ),
+    _cookieJar = PersistCookieJar(
+      storage: FileStorage('$cookiePath/.cookies/'),
     );
+    _dio.interceptors.add(CookieManager(_cookieJar));
 
-    // 自动注入 formhash 到 POST 请求
+    // 自动注入 formhash + 重定向日志
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
@@ -88,14 +90,25 @@ class RuisiApi {
               );
             } else if (options.data is Map) {
               (options.data as Map)['formhash'] = formhash;
-            } else if (options.data == null) {
-              options.data = {'formhash': formhash};
+            } else {
+              options.data ??= {'formhash': formhash};
             }
           }
           handler.next(options);
         },
       ),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cookie 管理
+  // ---------------------------------------------------------------------------
+
+  /// 清除所有 Cookie 和登录状态（退出登录时调用）
+  Future<void> clearCookies() async {
+    await _cookieJar.deleteAll();
+    formhash = null;
+    talker.info('已清除所有 Cookie 和 formhash');
   }
 
   // ---------------------------------------------------------------------------
