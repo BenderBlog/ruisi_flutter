@@ -33,8 +33,9 @@ class Urls {
   static const String newReplyUrl = '${baseUrl}forum.php?mod=guide&view=new';
 
   // ---- 板块 ----
+  // 与 iOS 版本一致：使用 mobile=2 移动端接口，返回简洁 HTML
   static const String forumlistUrl =
-      '${baseUrl}forum.php?mod=forumdisplay&fid=2&forumlist=1&inajax=1';
+      '${baseUrl}forum.php?inajax=1&forumlist=1&mobile=2';
   static String getPostsUrl(int fid) =>
       '${baseUrl}forum.php?mod=forumdisplay&fid=$fid';
 

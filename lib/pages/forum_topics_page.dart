@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_provider.dart';
 import '../widgets/topic_list_item.dart';
+import 'new_post_page.dart';
 import 'topic_detail_page.dart';
 
 /// 板块帖子列表
@@ -53,7 +54,29 @@ class _ForumTopicsPageState extends State<ForumTopicsPage> {
     final topics = app.topics;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          if (app.isLoggedIn)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: '发帖',
+              onPressed: () async {
+                final result = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        NewPostPage(fid: widget.fid, forumName: widget.title),
+                  ),
+                );
+                // 发帖成功后刷新列表
+                if (result == true && mounted) {
+                  app.loadTopics(widget.fid, refresh: true);
+                }
+              },
+            ),
+        ],
+      ),
       body: app.topicLoading && topics.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : topics.isEmpty

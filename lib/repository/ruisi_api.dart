@@ -312,6 +312,40 @@ class RuisiApi {
     }
   }
 
+  /// 上传文件（返回原始响应字符串）
+  ///
+  /// 用于需要自行解析返回内容的场景。
+  /// 返回响应字符串，失败返回 null。
+  Future<String?> uploadFile(String url, File file) async {
+    final fileName = file.path.split('/').last;
+    final mimeType = fileName.toLowerCase().endsWith('.png')
+        ? 'image/png'
+        : 'image/jpeg';
+
+    final formData = FormData.fromMap({
+      'Filedata': MultipartFile.fromFileSync(
+        file.path,
+        filename: fileName,
+        contentType: DioMediaType.parse(mimeType),
+      ),
+    });
+
+    try {
+      final response = await _dio.post<String>(
+        url,
+        data: formData,
+        options: Options(extra: {'withCredentials': true}),
+      );
+      return response.data;
+    } on DioException catch (e) {
+      talker.error('uploadFile 失败: ${_errorMessage(e)}', e);
+      return null;
+    } catch (e) {
+      talker.error('uploadFile 异常: $e', e);
+      return null;
+    }
+  }
+
   /// 从 DioException 中提取可读的错误信息
   static String _errorMessage(DioException e) {
     switch (e.type) {

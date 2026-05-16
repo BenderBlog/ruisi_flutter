@@ -46,3 +46,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - lib/assets/forums.json
+    - lib/assets/smiley.json
+    - lib/assets/smiley/
+    - lib/assets/smiley/acn/
+    - lib/assets/smiley/comcom/
+    - lib/assets/smiley/default/
+    - lib/assets/smiley/jgz/
+    - lib/assets/smiley/qiubilong/
+    - lib/assets/smiley/tieba/

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:html/parser.dart' as html_parser;
 
 import '../constants/urls.dart';
@@ -266,34 +268,143 @@ class ApiService {
 
   Future<List<ForumGroup>> getForumList() async {
     final (ok, body) = await _api.get(Urls.forumlistUrl);
-    if (!ok) return [];
+    if (!ok) {
+      _api.talker.warning('板块列表网络请求失败，使用本地 JSON 兜底');
+      return _loadForumListFromJson();
+    }
 
-    final doc = html_parser.parse(body);
+    final groups = _parseForumListHtml(body);
+    if (groups.isEmpty) {
+      _api.talker.warning('板块列表 HTML 解析为空，使用本地 JSON 兜底');
+      return _loadForumListFromJson();
+    }
+
+    _api.talker.info('板块列表解析成功: ${groups.length} 个分组');
+    return groups;
+  }
+
+  /// 解析论坛板块列表 HTML（与 iOS 版 AllForumsTableViewController 一致）
+  ///
+  /// iOS 参考: Ruisi_iOS-master/Ruisi/controller/AllForumsTableViewController.swift
+  /// 策略 1: `h2.bbs-forum-title` 作为分区标题，
+  ///         其后的同级 div 内 `li > a[href*=forumdisplay]` 作为板块链接
+  /// 策略 2: `select#` 元素内的 `option` 标签（备用）
+  List<ForumGroup> _parseForumListHtml(String html) {
+    final doc = html_parser.parse(html);
     final groups = <ForumGroup>[];
 
-    final sections = doc.querySelectorAll('.bm_c');
-    for (int i = 0; i < sections.length; i++) {
-      final section = sections[i];
-      final forumItems = section.querySelectorAll('a[href*="forumdisplay"]');
-      if (forumItems.isEmpty) continue;
+    // 策略 1: 与 iOS 一致 - h2.bbs-forum-title + 下一个兄弟 div
+    final titleElements = doc.querySelectorAll('h2.bbs-forum-title');
+    _api.talker.debug('找到 h2.bbs-forum-title 数量: ${titleElements.length}');
 
-      final forums = <Forum>[];
-      for (final item in forumItems) {
-        final name = item.text.trim();
-        final href = item.attributes['href'] ?? '';
-        final fidMatch = RegExp(r'fid=(\d+)').firstMatch(href);
-        if (fidMatch != null && name.isNotEmpty) {
-          forums.add(Forum(fid: int.parse(fidMatch.group(1)!), name: name));
+    if (titleElements.isNotEmpty) {
+      for (int i = 0; i < titleElements.length; i++) {
+        final titleEl = titleElements[i];
+        // 分区名称取第一个子元素的文本（如 <a>西电生活</a>）
+        final titleText = titleEl.children.isNotEmpty
+            ? titleEl.children.first.text.trim()
+            : titleEl.text.trim();
+
+        // 取下一个兄弟 div，其中包含 ul > li > a[forumdisplay]
+        final forumDiv = titleEl.nextElementSibling;
+        if (forumDiv == null) continue;
+
+        final forums = <Forum>[];
+        for (final a in forumDiv.querySelectorAll('a[href*="forumdisplay"]')) {
+          final href = a.attributes['href'] ?? '';
+          final fidMatch = RegExp(r'fid=(\d+)').firstMatch(href);
+          final forumName = a.text.trim();
+          if (fidMatch != null && forumName.isNotEmpty) {
+            forums.add(
+              Forum(fid: int.parse(fidMatch.group(1)!), name: forumName),
+            );
+          }
+        }
+
+        if (forums.isNotEmpty) {
+          groups.add(ForumGroup(fgId: i, name: titleText, forums: forums));
         }
       }
+    }
 
-      if (forums.isNotEmpty) {
-        final title =
-            section.parent?.querySelector('h2')?.text.trim() ?? '板块 $i';
-        groups.add(ForumGroup(fgId: i, name: title, forums: forums));
+    // 策略 2: iOS 备用方案 - select 标签内的 option
+    if (groups.isEmpty) {
+      final selects = doc.querySelectorAll('select[id]');
+      for (int i = 0; i < selects.length; i++) {
+        final select = selects[i];
+        final forums = <Forum>[];
+        for (final option in select.querySelectorAll('option')) {
+          final value = option.attributes['value'] ?? '';
+          final fidMatch = RegExp(r'fid=(\d+)').firstMatch(value);
+          final forumName = option.text.trim();
+          if (fidMatch != null && forumName.isNotEmpty) {
+            forums.add(
+              Forum(fid: int.parse(fidMatch.group(1)!), name: forumName),
+            );
+          }
+        }
+        if (forums.isNotEmpty) {
+          final title = select.previousElementSibling?.text.trim() ?? '板块 $i';
+          groups.add(ForumGroup(fgId: i, name: title, forums: forums));
+        }
       }
     }
+
+    // 策略 3: 降级匹配 - .bm_c 区块（原方案）
+    if (groups.isEmpty) {
+      final sections = doc.querySelectorAll('.bm_c');
+      for (int i = 0; i < sections.length; i++) {
+        final section = sections[i];
+        final forumItems = section.querySelectorAll('a[href*="forumdisplay"]');
+        if (forumItems.isEmpty) continue;
+
+        final forums = <Forum>[];
+        for (final item in forumItems) {
+          final name = item.text.trim();
+          final href = item.attributes['href'] ?? '';
+          final fidMatch = RegExp(r'fid=(\d+)').firstMatch(href);
+          if (fidMatch != null && name.isNotEmpty) {
+            forums.add(Forum(fid: int.parse(fidMatch.group(1)!), name: name));
+          }
+        }
+
+        if (forums.isNotEmpty) {
+          final title =
+              section.parent?.querySelector('h2')?.text.trim() ?? '板块 $i';
+          groups.add(ForumGroup(fgId: i, name: title, forums: forums));
+        }
+      }
+    }
+
     return groups;
+  }
+
+  /// 从本地 assets/forums.json 加载板块列表（兜底方案）
+  ///
+  /// 与 Android 版 RuisUtils.getForums() 一致，
+  /// 当网络请求失败或 HTML 解析失败时使用。
+  Future<List<ForumGroup>> _loadForumListFromJson() async {
+    try {
+      final jsonStr = await rootBundle.loadString('lib/assets/forums.json');
+      final List<dynamic> jsonList = json.decode(jsonStr);
+      final groups = <ForumGroup>[];
+      for (int i = 0; i < jsonList.length; i++) {
+        final group = jsonList[i] as Map<String, dynamic>;
+        final name = group['name'] as String;
+        final forumList = (group['forums'] as List<dynamic>).map((f) {
+          final map = f as Map<String, dynamic>;
+          return Forum(fid: map['fid'] as int, name: map['name'] as String);
+        }).toList();
+        if (forumList.isNotEmpty) {
+          groups.add(ForumGroup(fgId: i, name: name, forums: forumList));
+        }
+      }
+      _api.talker.info('从本地 JSON 加载板块列表成功: ${groups.length} 个分组');
+      return groups;
+    } catch (e) {
+      _api.talker.error('从本地 JSON 加载板块列表失败: $e');
+      return [];
+    }
   }
 
   // =========================================================================
@@ -762,6 +873,126 @@ class ApiService {
       );
     }
     return items;
+  }
+
+  // =========================================================================
+  // 发帖
+  // =========================================================================
+
+  /// 发布新帖子
+  ///
+  /// 返回 (成功?, 错误/成功消息)
+  Future<(bool, String?)> newPost(
+    int fid,
+    String subject,
+    String message,
+  ) async {
+    // 1. 先访问发帖页面获取最新的 formhash
+    final pageUrl = Urls.newPostUrl(fid);
+    final (pageOk, pageBody) = await _api.get(pageUrl);
+    if (!pageOk) {
+      _api.talker.error('获取发帖页面失败');
+      return (false, '获取发帖页面失败');
+    }
+
+    // 从发帖页面提取 formhash
+    final pageDoc = html_parser.parse(pageBody);
+    final freshFormhash = pageDoc
+        .querySelector('input[name="formhash"]')
+        ?.attributes['value'];
+    if (freshFormhash != null) {
+      _api.formhash = freshFormhash;
+      _api.talker.info('发帖页面 formhash 已更新: $freshFormhash');
+    }
+
+    // 2. 提交新帖
+    final (ok, body) = await _api.post(
+      '${Urls.baseUrl}forum.php?mod=post&action=newthread&fid=$fid&extra=&topicsubmit=yes&inajax=1',
+      params: {
+        'formhash': _api.formhash ?? '',
+        'subject': subject,
+        'message': message,
+        'allownoticeauthor': '1',
+        'usesig': '1',
+      },
+    );
+
+    if (!ok) return (false, '发帖请求失败');
+
+    // Discuz 发帖成功后会 301 重定向到新帖子，或返回包含成功提示的 XML
+    if (body.contains('error') || body.contains('错误')) {
+      // 提取错误信息
+      final errorMatch = RegExp(r'<!\[CDATA\[(.*?)\]\]>').firstMatch(body);
+      final errorText = errorMatch?.group(1) ?? '发帖失败，请检查内容后重试';
+      _api.talker.error('发帖失败: $errorText');
+      return (false, errorText);
+    }
+
+    _api.talker.info('发帖成功: fid=$fid, subject=$subject');
+    return (true, null);
+  }
+
+  // =========================================================================
+  // 图片上传
+  // =========================================================================
+
+  /// 上传图片附件
+  ///
+  /// 返回 (aid, url) 或 null（失败时）
+  Future<(int, String)?> uploadImage(File imageFile) async {
+    // 1. 先访问上传相关页面获取 formhash（确保 formhash 是最新的）
+    if (_api.formhash == null || _api.formhash!.isEmpty) {
+      final (pageOk, pageBody) = await _api.get(Urls.newPostUrl(2));
+      if (pageOk) {
+        final pageDoc = html_parser.parse(pageBody);
+        final freshFormhash = pageDoc
+            .querySelector('input[name="formhash"]')
+            ?.attributes['value'];
+        if (freshFormhash != null) {
+          _api.formhash = freshFormhash;
+        }
+      }
+    }
+
+    // 2. 上传图片
+    final result = await _api.uploadFile(Urls.uploadImageUrl, imageFile);
+    if (result == null) {
+      _api.talker.error('图片上传失败');
+      return null;
+    }
+
+    // 3. 解析上传结果
+    // Discuz 上传成功返回: DISCUZUPLOAD|0|aid|0|description\nimgUrl
+    final lines = result.split('\n').map((l) => l.trim()).toList();
+    if (lines.isEmpty) {
+      _api.talker.error('图片上传结果解析失败: 空响应');
+      return null;
+    }
+
+    final firstLine = lines[0];
+    if (!firstLine.startsWith('DISCUZUPLOAD')) {
+      _api.talker.error('图片上传结果格式异常: $firstLine');
+      return null;
+    }
+
+    final parts = firstLine.split('|');
+    // parts[0]=DISCUZUPLOAD, parts[1]=0(成功), parts[2]=aid, ...
+    if (parts.length < 3 || parts[1] != '0') {
+      final errorCode = parts.length > 1 ? parts[1] : 'unknown';
+      _api.talker.error('图片上传失败, error code: $errorCode');
+      return null;
+    }
+
+    final aid = int.tryParse(parts[2]);
+    if (aid == null) {
+      _api.talker.error('图片上传 aid 解析失败: ${parts[2]}');
+      return null;
+    }
+
+    // 第二行是图片 URL
+    final imgUrl = lines.length > 1 ? lines[1] : '';
+    _api.talker.info('图片上传成功: aid=$aid, url=$imgUrl');
+    return (aid, imgUrl);
   }
 
   // =========================================================================

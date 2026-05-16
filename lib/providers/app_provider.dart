@@ -1,6 +1,8 @@
 // Copyright 2026 BenderBlog Rodriguez and Contributors.
 // SPDX-License-Identifier: BSD-3-Clause
 
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/forum.dart';
@@ -386,6 +388,16 @@ class AppProvider extends ChangeNotifier {
     _searchResults = [];
     _searchKeyword = '';
     notifyListeners();
+  }
+
+  // ========== 发帖 ==========
+  Future<(bool, String?)> newPost(int fid, String subject, String content) {
+    return api.newPost(fid, subject, content);
+  }
+
+  // ========== 图片上传 ==========
+  Future<(int, String)?> uploadImage(File imageFile) {
+    return api.uploadImage(imageFile);
   }
 
   // ========== 代理设置 ==========

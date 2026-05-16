@@ -12,6 +12,7 @@ import 'login_page.dart';
 import 'user_page.dart';
 import 'favorites_page.dart';
 import 'messages_page.dart';
+import 'new_post_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
 import 'about_page.dart';
@@ -54,6 +55,14 @@ class _HomePageState extends State<HomePage>
       appBar: AppBar(
         title: const Text('睿思论坛'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_note),
+            tooltip: '发帖',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NewPostPage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () => Navigator.push(
