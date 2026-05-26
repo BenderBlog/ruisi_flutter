@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -930,69 +929,6 @@ class ApiService {
 
     _api.talker.info('发帖成功: fid=$fid, subject=$subject');
     return (true, null);
-  }
-
-  // =========================================================================
-  // 图片上传
-  // =========================================================================
-
-  /// 上传图片附件
-  ///
-  /// 返回 (aid, url) 或 null（失败时）
-  Future<(int, String)?> uploadImage(File imageFile) async {
-    // 1. 先访问上传相关页面获取 formhash（确保 formhash 是最新的）
-    if (_api.formhash == null || _api.formhash!.isEmpty) {
-      final (pageOk, pageBody) = await _api.get(Urls.newPostUrl(2));
-      if (pageOk) {
-        final pageDoc = html_parser.parse(pageBody);
-        final freshFormhash = pageDoc
-            .querySelector('input[name="formhash"]')
-            ?.attributes['value'];
-        if (freshFormhash != null) {
-          _api.formhash = freshFormhash;
-        }
-      }
-    }
-
-    // 2. 上传图片
-    final result = await _api.uploadFile(Urls.uploadImageUrl, imageFile);
-    if (result == null) {
-      _api.talker.error('图片上传失败');
-      return null;
-    }
-
-    // 3. 解析上传结果
-    // Discuz 上传成功返回: DISCUZUPLOAD|0|aid|0|description\nimgUrl
-    final lines = result.split('\n').map((l) => l.trim()).toList();
-    if (lines.isEmpty) {
-      _api.talker.error('图片上传结果解析失败: 空响应');
-      return null;
-    }
-
-    final firstLine = lines[0];
-    if (!firstLine.startsWith('DISCUZUPLOAD')) {
-      _api.talker.error('图片上传结果格式异常: $firstLine');
-      return null;
-    }
-
-    final parts = firstLine.split('|');
-    // parts[0]=DISCUZUPLOAD, parts[1]=0(成功), parts[2]=aid, ...
-    if (parts.length < 3 || parts[1] != '0') {
-      final errorCode = parts.length > 1 ? parts[1] : 'unknown';
-      _api.talker.error('图片上传失败, error code: $errorCode');
-      return null;
-    }
-
-    final aid = int.tryParse(parts[2]);
-    if (aid == null) {
-      _api.talker.error('图片上传 aid 解析失败: ${parts[2]}');
-      return null;
-    }
-
-    // 第二行是图片 URL
-    final imgUrl = lines.length > 1 ? lines[1] : '';
-    _api.talker.info('图片上传成功: aid=$aid, url=$imgUrl');
-    return (aid, imgUrl);
   }
 
   // =========================================================================

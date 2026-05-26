@@ -63,6 +63,7 @@ class RuisiApi {
       TalkerDioLogger(
         talker: this.talker,
         settings: const TalkerDioLoggerSettings(
+          printRequestData: true,
           printRequestHeaders: true,
           printResponseHeaders: true,
           printResponseMessage: true,
@@ -236,113 +237,6 @@ class RuisiApi {
     } catch (e) {
       talker.error('POST $url 异常: $e', e);
       return (false, '请求异常: $e');
-    }
-  }
-
-  /// 上传图片（Discuz 附件接口）
-  ///
-  /// 返回 (成功?, 消息)。成功时消息为附件 aid，失败时为错误描述。
-  Future<(bool, String)> uploadImage({
-    required String url,
-    Map<String, dynamic>? params,
-    required String imageName,
-    required Uint8List imageData,
-  }) async {
-    final mimeType = imageName.toLowerCase().endsWith('.png')
-        ? 'image/png'
-        : 'image/jpeg';
-
-    final formData = FormData.fromMap({
-      if (params != null) ...params,
-      'Filedata': MultipartFile.fromBytes(
-        imageData,
-        filename: imageName,
-        contentType: DioMediaType.parse(mimeType),
-      ),
-    });
-
-    try {
-      final response = await _dio.post<String>(
-        url,
-        data: formData,
-        options: Options(extra: {'withCredentials': true}),
-      );
-
-      final res = response.data;
-      if (res == null || res.isEmpty || !res.contains('|')) {
-        return (false, '上传失败，请稍后再试');
-      }
-
-      // Discuz 返回格式: DISCUZUPLOAD|类型|错误码|附件aid|...|文件名|...
-      final parts = res.split('|');
-      if (parts.length < 3) {
-        return (false, '上传失败，请稍后再试');
-      }
-
-      // parts[0] = "DISCUZUPLOAD", parts[2] = error code, parts[3] = aid
-      if (parts[0] == 'DISCUZUPLOAD' && parts[2] == '0') {
-        return (true, parts[3]); // 成功，返回 aid
-      }
-
-      // 失败：解析错误信息
-      String errmsg = '';
-      final errorCode = parts[2];
-
-      if (parts.length > 7) {
-        if (parts[7] == 'ban') {
-          errmsg = '(附件类型被禁止)';
-        } else if (parts[7] == 'perday' && parts.length > 8) {
-          final limit = (int.tryParse(parts[8]) ?? 0) ~/ 1024;
-          errmsg = '(不能超过 ${limit}K)';
-        } else {
-          final limit = (int.tryParse(parts[7]) ?? 0) ~/ 1024;
-          errmsg = '(不能超过 ${limit}K)';
-        }
-      }
-
-      if (uploadImageErrors.containsKey(errorCode)) {
-        errmsg = '${uploadImageErrors[errorCode]}$errmsg';
-      } else {
-        errmsg = '我也不知道是什么原因上传失败了';
-      }
-
-      return (false, errmsg);
-    } on DioException catch (e) {
-      return (false, _errorMessage(e));
-    }
-  }
-
-  /// 上传文件（返回原始响应字符串）
-  ///
-  /// 用于需要自行解析返回内容的场景。
-  /// 返回响应字符串，失败返回 null。
-  Future<String?> uploadFile(String url, File file) async {
-    final fileName = file.path.split('/').last;
-    final mimeType = fileName.toLowerCase().endsWith('.png')
-        ? 'image/png'
-        : 'image/jpeg';
-
-    final formData = FormData.fromMap({
-      'Filedata': MultipartFile.fromFileSync(
-        file.path,
-        filename: fileName,
-        contentType: DioMediaType.parse(mimeType),
-      ),
-    });
-
-    try {
-      final response = await _dio.post<String>(
-        url,
-        data: formData,
-        options: Options(extra: {'withCredentials': true}),
-      );
-      return response.data;
-    } on DioException catch (e) {
-      talker.error('uploadFile 失败: ${_errorMessage(e)}', e);
-      return null;
-    } catch (e) {
-      talker.error('uploadFile 异常: $e', e);
-      return null;
     }
   }
 

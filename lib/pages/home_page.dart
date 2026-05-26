@@ -65,10 +65,18 @@ class _HomePageState extends State<HomePage>
           ),
           IconButton(
             icon: const Icon(Icons.search),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SearchPage()),
-            ),
+            onPressed: () {
+              /// TODO: Not implemented
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text("未实现")));
+              /*
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SearchPage()),
+              );
+              */
+            },
           ),
           IconButton(
             icon: const Icon(Icons.forum),
@@ -230,26 +238,41 @@ class _HomePageState extends State<HomePage>
             MaterialPageRoute(builder: (_) => const FavoritesPage()),
           ),
         ),
+
         ListTile(
           leading: const Icon(Icons.notifications),
           title: const Text('消息中心'),
           trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MessagesPage()),
-          ),
+          onTap: () async {
+            /// TODO: Not implemented
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text("未实现")));
+            /*
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MessagesPage()),
+            );
+            */
+          },
         ),
         const Divider(),
         ListTile(
           leading: const Icon(Icons.edit_calendar),
           title: const Text('每日签到'),
           onTap: () async {
+            /// TODO: Not implemented
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text("未实现")));
+            /*
             await app.sign();
             if (!context.mounted) return;
             final msg = app.signResult?.message ?? '签到完成';
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(msg)));
+            */
           },
         ),
         ListTile(

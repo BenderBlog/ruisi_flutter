@@ -1,10 +1,7 @@
 // Copyright 2026 BenderBlog Rodriguez and Contributors.
 // SPDX-License-Identifier: BSD-3-Clause
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_provider.dart';
@@ -92,77 +89,6 @@ class _NewPostPageState extends State<NewPostPage> {
   }
 
   // ===========================================================================
-  // 图片上传
-  // ===========================================================================
-
-  Future<void> _pickAndUploadImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 2048,
-      maxHeight: 2048,
-      imageQuality: 85,
-    );
-    if (picked == null) return;
-    if (!mounted) return;
-
-    setState(() => _showSmiley = false);
-
-    final app = context.read<AppProvider>();
-    final file = File(picked.path);
-
-    // 显示上传中提示
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('图片上传中...'),
-          duration: Duration(seconds: 30),
-        ),
-      );
-    }
-
-    final result = await app.uploadImage(file);
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    if (result != null) {
-      setState(() {
-        _images.add(
-          _UploadedImage(aid: result.$1, url: result.$2, filename: picked.name),
-        );
-      });
-      // 在正文末尾插入附件标签
-      final tag = '[attachimg]${result.$1}[/attachimg]';
-      final text = _contentCtrl.text;
-      final sel = _contentCtrl.selection;
-      final pos = sel.isValid ? sel.end : text.length;
-      _contentCtrl.text = text.replaceRange(pos, pos, '\n$tag\n');
-      _contentCtrl.selection = TextSelection.collapsed(
-        offset: pos + tag.length + 2,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('图片上传成功'),
-            duration: Duration(seconds: 1),
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('图片上传失败'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
-
-  // ===========================================================================
   // 提交发帖
   // ===========================================================================
 
@@ -218,7 +144,7 @@ class _NewPostPageState extends State<NewPostPage> {
 
   Widget _buildForumSelector(ThemeData theme) {
     return Consumer<AppProvider>(
-      builder: (_, app, __) {
+      builder: (_, app, _) {
         if (app.forumLoading) {
           return const Padding(
             padding: EdgeInsets.all(16),
@@ -441,12 +367,6 @@ class _NewPostPageState extends State<NewPostPage> {
                           : theme.colorScheme.onSurfaceVariant,
                     ),
                     tooltip: '表情',
-                  ),
-                  // 图片按钮
-                  IconButton(
-                    onPressed: _pickAndUploadImage,
-                    icon: const Icon(Icons.image_outlined),
-                    tooltip: '上传图片',
                   ),
                   const Spacer(),
                   // 字数
