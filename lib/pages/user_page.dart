@@ -2,125 +2,151 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import 'package:get_it/get_it.dart';
+import '../l10n/app_localizations.dart';
 
-import '../providers/app_provider.dart';
-import '../widgets/topic_list_item.dart';
-import 'topic_detail_page.dart';
-import 'login_page.dart';
+
+import '../constants/urls.dart';
+import '../controller/ruisi_controller.dart';
+import '../models/message.dart';
 
 /// 用户页面（我的帖子、我的资料）
-class UserPage extends StatefulWidget {
-  final int initialTab;
-
-  const UserPage({super.key, this.initialTab = 0});
-
-  @override
-  State<UserPage> createState() => _UserPageState();
-}
-
-class _UserPageState extends State<UserPage>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabCtrl = TabController(
-      length: 2,
-      vsync: this,
-      initialIndex: widget.initialTab,
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final app = context.read<AppProvider>();
-      if (!app.isLoggedIn) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const LoginPage()),
-        );
-        return;
-      }
-      app.loadMyTopics(refresh: true);
-    });
-  }
-
-  @override
-  void dispose() {
-    _tabCtrl.dispose();
-    super.dispose();
-  }
+class UserPage extends StatelessWidget {
+  const UserPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppProvider>();
+    RuisiService c = GetIt.instance<RuisiService>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('我的'),
-        bottom: TabBar(
-          controller: _tabCtrl,
-          tabs: const [
-            Tab(text: '我的帖子'),
-            Tab(text: '资料'),
-          ],
-        ),
+        title: Text(AppLocalizations.of(context)!.userTitle),
       ),
-      body: TabBarView(
-        controller: _tabCtrl,
+      body: ListView(
+        padding: const EdgeInsets.all(16),
         children: [
-          // 我的帖子
-          app.myTopicsLoading && app.myTopics.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : app.myTopics.isEmpty
-              ? const Center(child: Text('暂无帖子'))
-              : RefreshIndicator(
-                  onRefresh: () async => app.loadMyTopics(refresh: true),
-                  child: ListView.separated(
-                    itemCount: app.myTopics.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final topic = app.myTopics[i];
-                      return TopicListItem(
-                        topic: topic,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => TopicDetailPage(tid: topic.tid),
-                          ),
-                        ),
-                      );
-                    },
+          Card(
+            elevation: 0,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadiusGeometry.circular(12),
+                    child: Image.network(
+                      Urls.getAvaterUrl(c.settings.uid, size: 0),
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          const Icon(Icons.person, size: 24),
+                    ),
                   ),
-                ),
-
-          // 资料
-          ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      const Icon(Icons.person, size: 64),
-                      const SizedBox(height: 12),
-                      Text(
-                        app.username ?? '未知用户',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'uid: ${app.settings.uid ?? ""}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
+                  const SizedBox(height: 12),
+                  Text(
+                    c.username ??
+                        AppLocalizations.of(context)!.userUnknown,
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'uid: ${c.settings.uid ?? ""}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
-            ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.book),
+            title: Text(AppLocalizations.of(context)!.homeMyPosts),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/user/posts'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.bookmark),
+            title: Text(
+              AppLocalizations.of(context)!.homeMyFavorites,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/user/favorites'),
+          ),
+          _CheckInListTile(onCheckIn: c.api.sign),
+          ListTile(
+            leading: const Icon(Icons.settings),
+            title: Text(AppLocalizations.of(context)!.homeSettings),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/settings'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: Text(AppLocalizations.of(context)!.homeAbout),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/about'),
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(
+              Icons.logout,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: Text(
+              AppLocalizations.of(context)!.commonLogout,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            onTap: () async {
+              await c.logout();
+              // GoRouter redirect handles navigation to /login
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CheckInListTile extends StatefulWidget {
+  final Future<SignResult> Function() onCheckIn;
+  const _CheckInListTile({required this.onCheckIn});
+
+  @override
+  State<_CheckInListTile> createState() => __CheckInListTileState();
+}
+
+class __CheckInListTileState extends State<_CheckInListTile> {
+  SignResult? signResult;
+  bool signLoading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const Icon(Icons.check_circle_outline),
+      title: Text(AppLocalizations.of(context)!.homeDailyCheckin),
+      trailing: signLoading
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.chevron_right),
+      onTap: signLoading
+          ? null
+          : () async {
+              setState(() {
+                signLoading = true;
+              });
+              signResult = await widget.onCheckIn();
+              if (!context.mounted) return;
+              setState(() {
+                signLoading = false;
+              });
+              final msg = signResult?.message ?? AppLocalizations.of(context)!.checkInComplete;
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(msg)));
+            },
     );
   }
 }

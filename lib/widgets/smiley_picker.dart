@@ -32,7 +32,7 @@ class _SmileyPickerState extends State<SmileyPicker>
   }
 
   Future<void> _loadSmileys() async {
-    final jsonStr = await rootBundle.loadString('lib/assets/smiley.json');
+    final jsonStr = await rootBundle.loadString('assets/smiley.json');
     final List<dynamic> data = json.decode(jsonStr);
     final categories = data.map((e) => _SmileyCategory.fromJson(e)).toList();
     setState(() {
@@ -90,15 +90,8 @@ class _SmileyPickerState extends State<SmileyPicker>
                       borderRadius: BorderRadius.circular(6),
                       child: s.isImage
                           ? Image.asset(
-                              'lib/assets/smiley/${s.path}.png',
+                              'assets/smiley/${s.path}.png',
                               fit: BoxFit.contain,
-                              errorBuilder: (_, _, _) => Center(
-                                child: Text(
-                                  s.value,
-                                  style: const TextStyle(fontSize: 10),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
                             )
                           : Center(
                               child: Text(

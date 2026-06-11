@@ -5,10 +5,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
-import 'package:talker/talker.dart';
+import 'package:talker_flutter/talker_flutter.dart';
 import 'package:talker_dio_logger/talker_dio_logger.dart';
 
 class RuisiApi {
@@ -43,11 +42,6 @@ class RuisiApi {
   /// 持久化 Cookie 存储（退出登录时需要清除）
   late final PersistCookieJar _cookieJar;
 
-  /// 当前代理配置
-  bool _proxyEnabled = false;
-  String _proxyHost = '';
-  int _proxyPort = 0;
-
   RuisiApi({required String cookiePath, Talker? talker})
     : talker = talker ?? Talker() {
     _dio = Dio(
@@ -55,6 +49,7 @@ class RuisiApi {
         baseUrl: _baseUrl,
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
+        headers: {HttpHeaders.userAgentHeader: "myRuisiAsyncLiteHttp/1.0"},
       ),
     );
 
@@ -70,9 +65,6 @@ class RuisiApi {
         ),
       ),
     );
-
-    // 代理配置（默认禁用）
-    _applyProxy();
 
     // Cookie 管理
     _cookieJar = PersistCookieJar(
@@ -110,43 +102,6 @@ class RuisiApi {
     await _cookieJar.deleteAll();
     formhash = null;
     talker.info('已清除所有 Cookie 和 formhash');
-  }
-
-  // ---------------------------------------------------------------------------
-  // 代理设置
-  // ---------------------------------------------------------------------------
-
-  /// 设置代理配置
-  void setProxy({required bool enabled, String host = '', int port = 0}) {
-    _proxyEnabled = enabled;
-    _proxyHost = host;
-    _proxyPort = port;
-    _applyProxy();
-    talker.info('代理设置已更新: enabled=$enabled, host=$host, port=$port');
-  }
-
-  /// 应用代理配置到 Dio
-  void _applyProxy() {
-    final adapter = _dio.httpClientAdapter;
-    if (adapter is IOHttpClientAdapter) {
-      if (_proxyEnabled && _proxyHost.isNotEmpty && _proxyPort > 0) {
-        final proxyUrl = '$_proxyHost:$_proxyPort';
-        adapter.createHttpClient = () {
-          final client = HttpClient();
-          client.findProxy = (uri) => 'PROXY $proxyUrl';
-          client.badCertificateCallback = (cert, host, port) => true;
-          return client;
-        };
-        talker.info('代理已启用: $proxyUrl');
-      } else {
-        adapter.createHttpClient = () {
-          final client = HttpClient();
-          client.findProxy = (uri) => 'DIRECT';
-          return client;
-        };
-        talker.info('代理已禁用，使用直连');
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -215,13 +170,17 @@ class RuisiApi {
   /// 会自动注入 formhash（如果已设置）。
   Future<(bool, String)> post(
     String url, {
-    Map<String, dynamic>? params,
+    Object? params,
     bool multipart = false,
   }) async {
     try {
       final response = await _dio.post<String>(
         url,
-        data: multipart ? FormData.fromMap(params ?? {}) : params,
+        data: multipart
+            ? (params is FormData
+                  ? params
+                  : FormData.fromMap((params as Map<String, dynamic>?) ?? {}))
+            : params,
         options: Options(
           contentType: multipart
               ? 'multipart/form-data'
@@ -238,6 +197,102 @@ class RuisiApi {
       talker.error('POST $url 异常: $e', e);
       return (false, '请求异常: $e');
     }
+  }
+
+  /// POST 并跟随 302 重定向（Discuz 搜索等场景）。
+  ///
+  /// Discuz 搜索 POST 后返回 302，Location 携带 searchid。
+  /// 本方法捕获 302，提取 Location，再 GET 拿到最终结果。
+  Future<(bool, String)> postFollowRedirect(
+    String url, {
+    Object? params,
+  }) async {
+    try {
+      final response = await _dio.post<String>(
+        url,
+        data: params,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          // 接受 302 状态码，不抛异常
+          validateStatus: (status) =>
+              status != null && (status < 400 || status == 302),
+          // 不自动跟随重定向，手动处理
+          followRedirects: false,
+          extra: {'withCredentials': true},
+        ),
+      );
+
+      // 如果是 302，提取 Location 并 GET
+      if (response.statusCode == 302) {
+        final location = response.headers.value('location');
+        if (location == null || location.isEmpty) {
+          return (false, '重定向地址为空');
+        }
+        // location 可能是相对路径，拼接 baseUrl
+        final redirectUrl = location.startsWith('http')
+            ? location
+            : '$_baseUrl/$location';
+        talker.info('POST 302 → GET $redirectUrl');
+        return get(redirectUrl);
+      }
+
+      return (true, response.data ?? '服务端无返回');
+    } on DioException catch (e) {
+      final msg = _errorMessage(e);
+      talker.error('POST $url 失败: $msg', e);
+      return (false, msg);
+    } catch (e) {
+      talker.error('POST $url 异常: $e', e);
+      return (false, '请求异常: $e');
+    }
+  }
+
+  /// 上传图片附件
+  ///
+  /// [uploadUrl] 服务端图片上传接口，[uid] 与 [hash] 来自发帖页面的
+  /// `uploadformdata` 字段。返回 `(成功?, 附件信息或错误信息)`，附件信息包含
+  /// `aid` 与附件缩略图地址。
+  Future<(bool, String)> uploadImage(
+    String uploadUrl, {
+    required String uid,
+    required String hash,
+    required Uint8List bytes,
+    String filename = 'upload.jpg',
+  }) async {
+    final form = FormData.fromMap({
+      'uid': uid,
+      'hash': hash,
+      'Filedata': MultipartFile.fromBytes(bytes, filename: filename),
+    });
+
+    final (ok, body) = await post(uploadUrl, params: form, multipart: true);
+    if (!ok) return (false, body);
+
+    if (!body.contains('|')) {
+      return (false, body.isEmpty ? '上传失败，请稍后再试' : body);
+    }
+
+    final parts = body.split('|');
+    if (parts[0] == 'DISCUZUPLOAD' && parts.length > 5 && parts[2] == '0') {
+      final aid = parts[3];
+      final serverPath = parts[5];
+      final url = '$_baseUrl/data/attachment/forum/$serverPath';
+      return (true, '$aid|$url');
+    }
+
+    final code = parts.length > 2 ? parts[2] : parts.first;
+    final limitInfo = parts.length > 7 ? parts[7] : '';
+    String serverMsg = '';
+    if (limitInfo == 'ban') {
+      serverMsg = '（附件类型被禁止）';
+    } else if (limitInfo == 'perday' && parts.length > 8) {
+      serverMsg = '（不能超过 ${int.parse(parts[8]) ~/ 1024} K）';
+    } else if (limitInfo.isNotEmpty) {
+      serverMsg = '（不能超过 ${int.parse(limitInfo) ~/ 1024} K）';
+    }
+    final mapped = uploadImageErrors[code];
+    final msg = (mapped ?? '上传失败') + serverMsg;
+    return (false, msg);
   }
 
   /// 从 DioException 中提取可读的错误信息

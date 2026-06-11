@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../l10n/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../constants/urls.dart';
@@ -19,7 +21,7 @@ class AboutPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('关于')),
+      appBar: AppBar(title: Text(AppLocalizations.of(context)!.aboutTitle)),
       body: ListView(
         children: [
           const SizedBox(height: 40),
@@ -28,7 +30,7 @@ class AboutPage extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20),
               child: Image.asset(
-                'assets/images/app_logo.png',
+                'assets/app_logo.png',
                 width: 80,
                 height: 80,
                 errorBuilder: (_, _, _) =>
@@ -37,16 +39,16 @@ class AboutPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const Center(
+          Center(
             child: Text(
-              '睿思',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              AppLocalizations.of(context)!.aboutAppName,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(height: 8),
           Center(
             child: Text(
-              '西安电子科技大学校园论坛客户端',
+              AppLocalizations.of(context)!.aboutSubtitle,
               style: TextStyle(fontSize: 14, color: Colors.grey[600]),
             ),
           ),
@@ -54,16 +56,16 @@ class AboutPage extends StatelessWidget {
           const Divider(),
 
           // 版本
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('版本'),
-            subtitle: Text('2.0.0 (Flutter)'),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: Text(AppLocalizations.of(context)!.aboutVersion),
+            subtitle: Text(AppLocalizations.of(context)!.aboutVersionNumber),
           ),
 
           // 源代码
           ListTile(
             leading: const Icon(Icons.code),
-            title: const Text('源代码'),
+            title: Text(AppLocalizations.of(context)!.aboutSourceCode),
             subtitle: Text(Urls.homePage),
             onTap: () => _openUrl(Urls.homePage),
           ),
@@ -71,8 +73,10 @@ class AboutPage extends StatelessWidget {
           // 反馈
           ListTile(
             leading: const Icon(Icons.bug_report),
-            title: const Text('问题反馈'),
-            subtitle: const Text('在 GitHub 上提交 issue'),
+            title: Text(AppLocalizations.of(context)!.aboutBugReport),
+            subtitle: Text(
+              AppLocalizations.of(context)!.aboutBugReportSubtitle,
+            ),
             onTap: () => _openUrl('${Urls.homePage}/issues'),
           ),
 
@@ -81,19 +85,19 @@ class AboutPage extends StatelessWidget {
           // 隐私政策
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
-            title: const Text('隐私政策'),
+            title: Text(AppLocalizations.of(context)!.aboutPrivacyPolicy),
             onTap: () => _showPrivacyPolicy(context),
           ),
 
           const Divider(),
 
           // 开源许可
-          const Padding(
-            padding: EdgeInsets.all(16),
+          Padding(
+            padding: const EdgeInsets.all(16),
             child: Text(
-              '本应用基于 BSD-3-Clause 许可证开源',
+              AppLocalizations.of(context)!.aboutLicense,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ),
         ],
@@ -105,20 +109,14 @@ class AboutPage extends StatelessWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('隐私政策'),
-        content: const SingleChildScrollView(
-          child: Text(
-            '本应用仅在西安电子科技大学校园网内运行，访问睿思论坛 (rs.xidian.edu.cn) 的数据。\n\n'
-            '本应用不会收集、存储或传输任何用户的个人信息到第三方服务器。\n\n'
-            '用户的登录凭据仅保存在本地设备中，用于与睿思论坛服务器进行身份验证。\n\n'
-            '本应用使用 Cookie 与睿思论坛服务器进行通信，所有数据交互均直接在用户的设备与睿思论坛服务器之间进行。\n\n'
-            '如有任何疑问，请通过 GitHub 提交 issue 联系开发者。',
-          ),
+        title: Text(AppLocalizations.of(context)!.aboutPrivacyPolicy),
+        content: SingleChildScrollView(
+          child: Text(AppLocalizations.of(context)!.aboutPrivacyPolicyContent),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('确定'),
+            onPressed: () => ctx.pop(),
+            child: Text(AppLocalizations.of(context)!.commonConfirm),
           ),
         ],
       ),

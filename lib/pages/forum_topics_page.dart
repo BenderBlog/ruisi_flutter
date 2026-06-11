@@ -2,123 +2,26 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:get_it/get_it.dart';
 
-import '../providers/app_provider.dart';
-import '../widgets/topic_list_item.dart';
-import 'new_post_page.dart';
-import 'topic_detail_page.dart';
+import '../controller/ruisi_controller.dart';
+import 'topic_list_page.dart';
 
-/// 板块帖子列表
-class ForumTopicsPage extends StatefulWidget {
+/// 板块帖子列表页
+class ForumTopicsPage extends StatelessWidget {
   final int fid;
-  final String title;
+  final String name;
 
-  const ForumTopicsPage({super.key, required this.fid, required this.title});
-
-  @override
-  State<ForumTopicsPage> createState() => _ForumTopicsPageState();
-}
-
-class _ForumTopicsPageState extends State<ForumTopicsPage> {
-  final _scrollCtrl = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppProvider>().loadTopics(widget.fid, refresh: true);
-    });
-    _scrollCtrl.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_scrollCtrl.position.pixels >=
-        _scrollCtrl.position.maxScrollExtent - 200) {
-      final app = context.read<AppProvider>();
-      if (app.hasMoreTopics && !app.topicLoading) {
-        app.loadTopics(widget.fid);
-      }
-    }
-  }
+  const ForumTopicsPage({super.key, required this.fid, required this.name});
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppProvider>();
-    final topics = app.topics;
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          if (app.isLoggedIn)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              tooltip: '发帖',
-              onPressed: () async {
-                final result = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        NewPostPage(fid: widget.fid, forumName: widget.title),
-                  ),
-                );
-                // 发帖成功后刷新列表
-                if (result == true && mounted) {
-                  app.loadTopics(widget.fid, refresh: true);
-                }
-              },
-            ),
-        ],
+      appBar: AppBar(title: Text(name)),
+      body: TopicListPage(
+        getTopicList: (int page) =>
+            GetIt.instance<RuisiService>().api.getTopicList(fid, page: page),
       ),
-      body: app.topicLoading && topics.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : topics.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('暂无帖子'),
-                  const SizedBox(height: 8),
-                  FilledButton.tonal(
-                    onPressed: () => app.loadTopics(widget.fid, refresh: true),
-                    child: const Text('刷新'),
-                  ),
-                ],
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => app.loadTopics(widget.fid, refresh: true),
-              child: ListView.separated(
-                controller: _scrollCtrl,
-                itemCount: topics.length + (app.hasMoreTopics ? 1 : 0),
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  if (i == topics.length) {
-                    return const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-                  final topic = topics[i];
-                  return TopicListItem(
-                    topic: topic,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TopicDetailPage(tid: topic.tid),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
     );
   }
 }

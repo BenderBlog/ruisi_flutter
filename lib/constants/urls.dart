@@ -1,20 +1,11 @@
 // Copyright 2026 BenderBlog Rodriguez and Contributors.
 // SPDX-License-Identifier: BSD-3-Clause
 
-/// 睿思论坛 API 地址常量
-/// 基于 Discuz! 论坛系统
-/// 仅校内网运行
-class AppConstants {
-  static const String appId = 'id1322805454';
-  static const int postId = 921699;
-  static const String hostRs = 'rs.xidian.edu.cn';
-}
-
 class Urls {
-  static const String homePage = 'https://github.com/BenderBlog/ruisi_flutter';
+  static const String homePage =
+      'https://github.com/BenderBlog/traintime_pda/tree/main/lib/external/ruisi_flutter/';
   static const String baseUrl = 'https://rs.xidian.edu.cn/';
 
-  // ---- 认证 ----
   static const String loginUrl =
       '${baseUrl}member.php?mod=logging&action=login';
   static const String checkLoginUrl =
@@ -33,7 +24,6 @@ class Urls {
   static const String newReplyUrl = '${baseUrl}forum.php?mod=guide&view=new';
 
   // ---- 板块 ----
-  // 与 iOS 版本一致：使用 mobile=2 移动端接口，返回简洁 HTML
   static const String forumlistUrl =
       '${baseUrl}forum.php?inajax=1&forumlist=1&mobile=2';
   static String getPostsUrl(int fid) =>
@@ -48,7 +38,7 @@ class Urls {
   }
 
   static String newPostUrl(int fid) =>
-      '${baseUrl}forum.php?mod=post&action=newthread&fid=$fid';
+      '${baseUrl}forum.php?mod=post&action=newthread&fid=$fid&mobile=2';
   static const String editSubmitUrl =
       '${baseUrl}forum.php?mod=post&action=edit&extra=&editsubmit=yes';
   static String editPostUrl(int tid, int pid) =>
@@ -76,12 +66,7 @@ class Urls {
       '${baseUrl}home.php?mod=spacecp&ac=favorite&op=delete&favid=$favid&type=all&inajax=1';
 
   // ---- 用户 ----
-  static String getMyPostsUrl(int? uid) {
-    if (uid == null) {
-      return '${baseUrl}forum.php?mod=guide&view=my';
-    }
-    return '${baseUrl}home.php?mod=space&uid=$uid&do=thread&view=me';
-  }
+  static const String getMyPostsUrl = '${baseUrl}forum.php?mod=guide&view=my';
 
   static const String myMoneyUrl =
       '${baseUrl}home.php?mod=spacecp&ac=credit&showcredit=1&inajax=1';
@@ -107,15 +92,17 @@ class Urls {
 
   // ---- 搜索 ----
   static const String searchUrl = '${baseUrl}search.php?mod=forum';
-  static String getSearchUrl2(String searchId) =>
-      '${baseUrl}search.php?mod=forum&searchid=$searchId&orderby=lastpost&ascdesc=desc&searchsubmit=yes';
+  static String getSearchUrl(String searchId, String keyword, {int page = 1}) =>
+      '${baseUrl}search.php?mod=forum&searchid=$searchId'
+      '&orderby=lastpost&ascdesc=desc&searchsubmit=yes'
+      '&kw=$keyword&page=$page';
 
   // ---- @列表 ----
   static const String atListUrl = '${baseUrl}misc.php?mod=getatuser&inajax=1';
 
   // ---- 图片上传 ----
   static const String uploadImageUrl =
-      '${baseUrl}misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2';
+      '${baseUrl}misc.php?mod=swfupload&operation=upload&type=image&inajax=yes&infloat=yes&simple=2&mobile=2';
   static String deleteUploadedUrl(String aid) =>
       '${baseUrl}forum.php?mod=ajax&action=deleteattach&inajax=yes&aids[]=$aid';
 

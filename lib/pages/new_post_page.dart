@@ -2,411 +2,418 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import '../l10n/app_localizations.dart';
+import 'package:get_it/get_it.dart';
 
-import '../providers/app_provider.dart';
+import '../controller/ruisi_controller.dart';
+import '../models/post_page_meta.dart';
+import '../constants/urls.dart';
+import '../utils/pick_file.dart';
 import '../widgets/smiley_picker.dart';
 
 /// 发帖页面
-///
-/// 支持输入标题和正文（BBCode），可插入表情和图片。
-/// 图片上传后会在正文中插入对应的 BBCode 附件标签。
 class NewPostPage extends StatefulWidget {
-  /// 板块 fid，为 null 时显示论坛选择器
-  final int? fid;
-
-  /// 板块名称（仅用于 AppBar 显示）
-  final String? forumName;
-
-  const NewPostPage({super.key, this.fid, this.forumName});
+  const NewPostPage({super.key});
 
   @override
   State<NewPostPage> createState() => _NewPostPageState();
 }
 
 class _NewPostPageState extends State<NewPostPage> {
-  final _titleCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _subjectCtrl = TextEditingController();
   final _contentCtrl = TextEditingController();
-  final _titleFocus = FocusNode();
-  final _contentFocus = FocusNode();
-
   int? _selectedFid;
-  String? _selectedForumName;
   bool _submitting = false;
   bool _showSmiley = false;
-  final List<_UploadedImage> _images = [];
-
-  int? get _effectiveFid => widget.fid ?? _selectedFid;
+  bool _metaLoading = false;
+  bool _uploading = false;
+  PostPageMeta? _meta;
+  int? _selectedTypeId;
+  final List<_UploadedAttachment> _attachments = [];
+  RuisiService c = GetIt.instance<RuisiService>();
 
   @override
   void initState() {
     super.initState();
-    _selectedFid = widget.fid;
-    _selectedForumName = widget.forumName;
-    // 未指定板块时加载论坛列表供选择
-    if (widget.fid == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final app = context.read<AppProvider>();
-        if (app.forumGroups.isEmpty) {
-          app.loadForums();
-        }
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (c.forumState.value.groups.isEmpty && !c.forumState.value.isLoading) {
+        c.loadForums();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _titleCtrl.dispose();
+    _subjectCtrl.dispose();
     _contentCtrl.dispose();
-    _titleFocus.dispose();
-    _contentFocus.dispose();
     super.dispose();
   }
 
-  // ===========================================================================
-  // 表情
-  // ===========================================================================
+  Future<void> _loadMeta(int fid) async {
+    setState(() {
+      _metaLoading = true;
+      _meta = null;
+      _selectedTypeId = null;
+    });
 
-  void _toggleSmiley() {
-    setState(() => _showSmiley = !_showSmiley);
-    if (_showSmiley) {
-      // 打开表情面板时收起键盘
-      FocusScope.of(context).unfocus();
+    try {
+      final meta = await c.api.loadNewPostMeta(fid);
+      if (!mounted) return;
+      setState(() {
+        _meta = meta;
+        _selectedTypeId = meta.typeOptions.isNotEmpty
+            ? meta.typeOptions.first.id
+            : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('${AppLocalizations.of(context)!.newPostMetaLoadFailed}: $e')));
+    } finally {
+      if (mounted) setState(() => _metaLoading = false);
     }
+  }
+
+  bool get _canUpload {
+    return (_meta?.uploadUid != null) && (_meta?.uploadHash != null);
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    if (!_canUpload) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.currentForumNoUploadSupport)));
+      return;
+    }
+
+    final file = await pickFile();
+    if (file == null) return;
+    if (!mounted) return;
+
+    final ext = file.extension?.toLowerCase();
+    const allowed = {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'};
+    if (ext == null || !allowed.contains(ext)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context)!.imageFormatNotSupported)),
+      );
+      return;
+    }
+
+    final data = await file.readAsBytes();
+    if (!mounted) return;
+    if (data.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.imageReadFailed)));
+      return;
+    }
+
+    setState(() => _uploading = true);
+    try {
+      final (ok, result) = await c.api.ruisiApi.uploadImage(
+        Urls.uploadImageUrl,
+        uid: _meta!.uploadUid!,
+        hash: _meta!.uploadHash!,
+        bytes: data,
+        filename: file.name,
+      );
+      if (!ok) throw Exception(result);
+      final parts = result.split('|');
+      final aid = parts.isNotEmpty ? parts.first : result;
+      final thumbnailUrl = parts.length > 1 ? parts[1] : '';
+      setState(
+        () => _attachments.add(
+          _UploadedAttachment(
+            aid: aid,
+            name: file.name,
+            thumbnailUrl: thumbnailUrl,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('${AppLocalizations.of(context)!.imageUploadFailed}: $e')));
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _removeAttachment(_UploadedAttachment attachment) async {
+    try {
+      await c.api.ruisiApi.post(Urls.deleteUploadedUrl(attachment.aid));
+    } catch (_) {
+      // 忽略删除失败，保持列表同步即可
+    }
+    setState(() => _attachments.remove(attachment));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(AppLocalizations.of(context)!.postTitle),
+        actions: [
+          TextButton(
+            onPressed: _submitting || _uploading || _metaLoading
+                ? null
+                : _submit,
+            child: _submitting
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(AppLocalizations.of(context)!.postPublish),
+          ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // 板块选择
+            ValueListenableBuilder<ForumState>(
+              valueListenable: c.forumState,
+              builder: (context, state, child) {
+                // 检查是否正在加载且没有数据
+                final bool isLoading = state.isLoading && state.groups.isEmpty;
+
+                // 从 state 中展平获取所有的 sub-forum 列表
+                final forums = state.groups.expand((g) => g.forums).toList();
+
+                return DropdownButtonFormField<int>(
+                  value:
+                      _selectedFid, // 注意：Flutter 新版本推荐使用 value 代替 initialValue
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)!.postSelectForum,
+                    // 如果正在加载，提示用户稍等；如果加载失败且无数据，提示刷新
+                    hintText: isLoading
+                        ? AppLocalizations.of(context)!.postForumLoading
+                        : (state.hasError && forums.isEmpty
+                              ? AppLocalizations.of(context)!.postForumLoadFailed
+                              : null),
+                    border: const OutlineInputBorder(),
+                  ),
+                  // 当正在加载或数据为空时，将 items 设为 null，下拉框会自动变成禁用(Disabled)状态
+                  items: forums.isEmpty
+                      ? null
+                      : forums
+                            .map(
+                              (f) => DropdownMenuItem(
+                                value: f.fid,
+                                child: Text(f.name),
+                              ),
+                            )
+                            .toList(),
+                  onChanged: (v) {
+                    setState(() => _selectedFid = v);
+                    if (v != null) _loadMeta(v);
+                  },
+                  validator: (v) => v == null
+                      ? AppLocalizations.of(context)!.postSelectForumHint
+                      : null,
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            if (_metaLoading) const LinearProgressIndicator(minHeight: 2),
+            if (_meta != null && _meta!.typeOptions.isNotEmpty) ...[
+              DropdownButtonFormField<int>(
+                initialValue: _selectedTypeId,
+                items: _meta!.typeOptions
+                    .map(
+                      (t) => DropdownMenuItem(value: t.id, child: Text(t.name)),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => _selectedTypeId = v),
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.postSubjectCategory,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // 标题
+            TextFormField(
+              controller: _subjectCtrl,
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.postSubject,
+                border: const OutlineInputBorder(),
+              ),
+              validator: (v) => (v == null || v.isEmpty)
+                  ? AppLocalizations.of(context)!.postSubjectHint
+                  : null,
+            ),
+            const SizedBox(height: 16),
+
+            // 内容
+            TextFormField(
+              controller: _contentCtrl,
+              decoration: InputDecoration(
+                labelText: AppLocalizations.of(context)!.postContent,
+                border: const OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 12,
+              validator: (v) => (v == null || v.isEmpty)
+                  ? AppLocalizations.of(context)!.postContentHint
+                  : null,
+            ),
+            const SizedBox(height: 8),
+
+            // 表情工具栏
+            Row(
+              children: [
+                IconButton(
+                  icon: Icon(
+                    _showSmiley
+                        ? Icons.keyboard
+                        : Icons.emoji_emotions_outlined,
+                  ),
+                  tooltip: AppLocalizations.of(context)!.postSmiley,
+                  onPressed: () => setState(() => _showSmiley = !_showSmiley),
+                ),
+                IconButton(
+                  icon: _uploading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.image_outlined),
+                  tooltip: AppLocalizations.of(context)!.uploadImage,
+                  onPressed: _uploading || !_canUpload
+                      ? null
+                      : _pickAndUploadImage,
+                ),
+              ],
+            ),
+
+            // 表情面板
+            if (_showSmiley) SmileyPicker(onSelected: _insertSmiley),
+            if (_attachments.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _attachments
+                      .map(
+                        (a) => Stack(
+                          alignment: Alignment.topRight,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: a.thumbnailUrl.isNotEmpty
+                                  ? Image.network(
+                                      a.thumbnailUrl,
+                                      width: 72,
+                                      height: 72,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : Container(
+                                      width: 72,
+                                      height: 72,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceContainerHighest,
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        a.name,
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                            ),
+                            GestureDetector(
+                              onTap: () => _removeAttachment(a),
+                              child: const CircleAvatar(
+                                radius: 10,
+                                backgroundColor: Colors.black54,
+                                child: Icon(
+                                  Icons.close,
+                                  size: 12,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _insertSmiley(String value) {
     final text = _contentCtrl.text;
-    final sel = _contentCtrl.selection;
-    final newText = text.replaceRange(
-      sel.start >= 0 ? sel.start : text.length,
-      sel.end >= 0 ? sel.end : text.length,
-      value,
+    final selection = _contentCtrl.selection;
+    final cursorPos = selection.isValid ? selection.start : text.length;
+
+    final newText =
+        text.substring(0, cursorPos) + value + text.substring(cursorPos);
+    _contentCtrl.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: cursorPos + value.length),
     );
-    _contentCtrl.text = newText;
-    final newPos = (sel.start >= 0 ? sel.start : text.length) + value.length;
-    _contentCtrl.selection = TextSelection.collapsed(offset: newPos);
   }
 
-  // ===========================================================================
-  // 提交发帖
-  // ===========================================================================
-
   Future<void> _submit() async {
-    final fid = _effectiveFid;
-    if (fid == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请先选择论坛板块')));
-      return;
-    }
-    final title = _titleCtrl.text.trim();
-    final content = _contentCtrl.text.trim();
-
-    if (title.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请输入标题')));
-      _titleFocus.requestFocus();
-      return;
-    }
-    if (content.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请输入内容')));
-      _contentFocus.requestFocus();
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedFid == null) return;
 
     setState(() => _submitting = true);
 
-    final app = context.read<AppProvider>();
-    final (ok, message) = await app.newPost(fid, title, content);
+    final (ok, error) = await c.api.newPost(
+      _selectedFid!,
+      _subjectCtrl.text,
+      _contentCtrl.text,
+      _attachments.map((a) => a.aid).toList(),
+      _selectedTypeId,
+    );
 
-    if (!mounted) return;
     setState(() => _submitting = false);
 
+    if (!mounted) return;
+
     if (ok) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('发帖成功')));
-      Navigator.pop(context, true); // 返回 true 表示发帖成功
-    } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message ?? '发帖失败，请重试')));
-    }
-  }
-
-  // ===========================================================================
-  // 论坛选择器
-  // ===========================================================================
-
-  Widget _buildForumSelector(ThemeData theme) {
-    return Consumer<AppProvider>(
-      builder: (_, app, _) {
-        if (app.forumLoading) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final allForums = app.forumGroups.expand((g) => g.forums).toList();
-        if (allForums.isEmpty) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                const Icon(Icons.warning_amber, size: 18),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('无法加载论坛列表')),
-                TextButton(
-                  onPressed: () => app.loadForums(),
-                  child: const Text('重试'),
-                ),
-              ],
-            ),
-          );
-        }
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            border: Border(bottom: Divider.createBorderSide(context)),
-          ),
-          child: DropdownButton<int>(
-            value: _selectedFid,
-            hint: const Text('请选择论坛板块'),
-            isExpanded: true,
-            underline: const SizedBox(),
-            items: [
-              for (final group in app.forumGroups)
-                for (final forum in group.forums)
-                  DropdownMenuItem(value: forum.fid, child: Text(forum.name)),
-            ],
-            onChanged: (fid) {
-              if (fid == null) return;
-              final forum = allForums.firstWhere((f) => f.fid == fid);
-              setState(() {
-                _selectedFid = fid;
-                _selectedForumName = forum.name;
-              });
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  // ===========================================================================
-  // UI
-  // ===========================================================================
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _selectedForumName != null ? '发帖 · $_selectedForumName' : '发帖',
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.postSuccess),
         ),
-        actions: [
-          // 发布按钮
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilledButton(
-              onPressed: _submitting ? null : _submit,
-              child: _submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('发布'),
-            ),
+      );
+      context.pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error ?? AppLocalizations.of(context)!.postFailure,
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // 未指定板块时显示论坛选择器
-          if (widget.fid == null) _buildForumSelector(theme),
-          // 标题输入
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: TextField(
-              controller: _titleCtrl,
-              focusNode: _titleFocus,
-              style: theme.textTheme.titleMedium,
-              decoration: const InputDecoration(
-                hintText: '帖子标题',
-                border: InputBorder.none,
-              ),
-              maxLength: 120,
-              buildCounter:
-                  (
-                    _, {
-                    required currentLength,
-                    required isFocused,
-                    required maxLength,
-                  }) => null, // 隐藏字数统计
-            ),
-          ),
-          const Divider(height: 1),
-          // 内容输入
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                // 点击内容区域时关闭表情面板，弹出键盘
-                if (_showSmiley) {
-                  setState(() => _showSmiley = false);
-                }
-                _contentFocus.requestFocus();
-              },
-              child: Container(
-                color: theme.colorScheme.surface,
-                child: TextField(
-                  controller: _contentCtrl,
-                  focusNode: _contentFocus,
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: const InputDecoration(
-                    hintText: '说点什么吧…（支持 BBCode）',
-                    contentPadding: EdgeInsets.all(16),
-                    border: InputBorder.none,
-                  ),
-                  onTap: () {
-                    if (_showSmiley) {
-                      setState(() => _showSmiley = false);
-                    }
-                  },
-                ),
-              ),
-            ),
-          ),
-          // 已上传图片预览
-          if (_images.isNotEmpty)
-            SizedBox(
-              height: 80,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                itemCount: _images.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (_, i) {
-                  final img = _images[i];
-                  return Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          img.url,
-                          width: 64,
-                          height: 64,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Container(
-                            width: 64,
-                            height: 64,
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            child: const Icon(Icons.image, size: 28),
-                          ),
-                        ),
-                      ),
-                      // 删除按钮
-                      Positioned(
-                        top: 0,
-                        right: 0,
-                        child: GestureDetector(
-                          onTap: () => setState(() => _images.removeAt(i)),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            padding: const EdgeInsets.all(2),
-                            child: const Icon(
-                              Icons.close,
-                              size: 14,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          // 底部工具栏
-          Container(
-            decoration: BoxDecoration(
-              border: Border(top: Divider.createBorderSide(context)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Row(
-                children: [
-                  // 表情按钮
-                  IconButton(
-                    onPressed: _toggleSmiley,
-                    icon: Icon(
-                      _showSmiley
-                          ? Icons.keyboard_outlined
-                          : Icons.emoji_emotions_outlined,
-                      color: _showSmiley
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant,
-                    ),
-                    tooltip: '表情',
-                  ),
-                  const Spacer(),
-                  // 字数
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Text(
-                      '${_contentCtrl.text.length} 字',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // 表情选择器（可切换显示）
-          if (_showSmiley)
-            Container(
-              decoration: BoxDecoration(
-                border: Border(top: Divider.createBorderSide(context)),
-                color: theme.colorScheme.surface,
-              ),
-              child: SmileyPicker(onSelected: _insertSmiley),
-            ),
-        ],
-      ),
-    );
+        ),
+      );
+    }
   }
 }
 
-/// 已上传的图片信息
-class _UploadedImage {
-  final int aid;
-  final String url;
-  final String filename;
+class _UploadedAttachment {
+  final String aid;
+  final String name;
+  final String thumbnailUrl;
 
-  _UploadedImage({
+  const _UploadedAttachment({
     required this.aid,
-    required this.url,
-    required this.filename,
+    required this.name,
+    this.thumbnailUrl = '',
   });
 }

@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import 'package:get_it/get_it.dart';
+import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
+import '../l10n/app_localizations.dart';
 
-import '../providers/app_provider.dart';
+import '../models/topic.dart';
+import '../controller/ruisi_controller.dart';
 import '../widgets/topic_list_item.dart';
-import 'topic_detail_page.dart';
 
 /// 搜索页面
 class SearchPage extends StatefulWidget {
@@ -17,81 +20,59 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
-  final _searchCtrl = TextEditingController();
-  final _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
-    });
-  }
+  String search = '';
+  late final _textEditingController = TextEditingController.fromValue(
+    TextEditingValue(text: search),
+  );
+  late final _pagingController = PagingController<int, Topic>(
+    getNextPageKey: (state) =>
+        state.lastPageIsEmpty ? null : state.nextIntPageKey,
+    fetchPage: (pageKey) =>
+        GetIt.instance<RuisiService>().search(search, pageKey),
+  );
 
   @override
   void dispose() {
-    _searchCtrl.dispose();
-    _focusNode.dispose();
+    _textEditingController.dispose();
+    _pagingController.dispose();
     super.dispose();
-  }
-
-  void _doSearch() {
-    final keyword = _searchCtrl.text.trim();
-    if (keyword.isEmpty) return;
-    context.read<AppProvider>().search(keyword);
   }
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppProvider>();
-
     return Scaffold(
       appBar: AppBar(
-        title: TextField(
-          controller: _searchCtrl,
-          focusNode: _focusNode,
+        title: TextFormField(
+          controller: _textEditingController,
+          autofocus: true,
           decoration: InputDecoration(
-            hintText: '搜索帖子...',
+            hintText: AppLocalizations.of(context)!.searchHint,
             border: InputBorder.none,
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.clear),
-              onPressed: () {
-                _searchCtrl.clear();
-                app.clearSearch();
-              },
-            ),
           ),
-          onSubmitted: (_) => _doSearch(),
+          onChanged: (String textFieldValue) => search = textFieldValue,
+          onFieldSubmitted: (value) {
+            _pagingController.refresh();
+          },
         ),
-        actions: [
-          IconButton(icon: const Icon(Icons.search), onPressed: _doSearch),
-        ],
       ),
-      body: app.searchLoading
-          ? const Center(child: CircularProgressIndicator())
-          : app.searchResults.isEmpty
-          ? Center(
-              child: Text(app.searchKeyword.isEmpty ? '输入关键词搜索' : '未找到相关帖子'),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => _doSearch(),
-              child: ListView.separated(
-                itemCount: app.searchResults.length,
+      body: PagingListener(
+        controller: _pagingController,
+        builder: (context, state, fetchNextPage) => LayoutBuilder(
+          builder: (context, constraints) =>
+              PagedListView<int, Topic>.separated(
+                state: state,
+                fetchNextPage: fetchNextPage,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                builderDelegate: PagedChildBuilderDelegate(
+                  itemBuilder: (context, item, index) => TopicListItem(
+                    topic: item,
+                    onTap: () => context.push('/topic/${item.tid}'),
+                  ),
+                ),
                 separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final topic = app.searchResults[i];
-                  return TopicListItem(
-                    topic: topic,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TopicDetailPage(tid: topic.tid),
-                      ),
-                    ),
-                  );
-                },
               ),
-            ),
+        ),
+      ),
     );
   }
 }

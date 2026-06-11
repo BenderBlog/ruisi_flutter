@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../providers/app_provider.dart';
-import 'home_page.dart';
-import 'settings_page.dart';
+import '../l10n/app_localizations.dart';
+import 'package:get_it/get_it.dart';
+import 'package:talker_flutter/talker_flutter.dart';
+
+import '../controller/ruisi_controller.dart';
 
 /// 登录页面
 class LoginPage extends StatefulWidget {
@@ -17,19 +19,25 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _captchaCtrl = TextEditingController();
-  bool _obscure = true;
-  bool _resetting = false;
+  final _formKey = GlobalKey<FormState>();
+
+  // 验证码状态（从控制器下沉）
+  bool _captchaRequired = false;
+  String? _captchaHash;
+  Uint8List? _captchaImageBytes;
+  bool _captchaLoading = false;
+  String? _captchaError;
+
+  RuisiService get _c => GetIt.instance<RuisiService>();
 
   @override
   void initState() {
     super.initState();
-    // 页面加载后始终加载验证码
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppProvider>().checkLoginCaptcha();
+      _checkLoginCaptcha();
     });
   }
 
@@ -41,302 +49,279 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  Future<void> _resetLoginState() async {
-    setState(() => _resetting = true);
-    _usernameCtrl.clear();
-    _passwordCtrl.clear();
-    _captchaCtrl.clear();
-    await context.read<AppProvider>().resetLoginState();
-    if (mounted) setState(() => _resetting = false);
+  Future<void> _checkLoginCaptcha() async {
+    final hash = await _c.api.fetchLoginCaptchaHash();
+    if (!mounted) return;
+    setState(() {
+      _captchaHash = hash;
+      _captchaRequired = hash != null;
+    });
+
+    if (_captchaRequired) {
+      await _loadCaptchaImage();
+    }
   }
 
-  Future<void> _doLogin() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _refreshCaptcha() async {
+    final hash = await _c.api.fetchLoginCaptchaHash();
+    if (!mounted) return;
+    setState(() {
+      _captchaHash = hash;
+    });
+    await _loadCaptchaImage();
+  }
 
-    final app = context.read<AppProvider>();
+  Future<void> _loadCaptchaImage() async {
+    setState(() {
+      _captchaLoading = true;
+      _captchaError = null;
+    });
 
-    // 如果需要验证码但未输入
-    if (app.captchaRequired && _captchaCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请输入验证码')));
+    if (_captchaHash == null) {
+      if (!mounted) return;
+      setState(() {
+        _captchaLoading = false;
+        _captchaError = AppLocalizations.of(context)!.captchaUnavailable;
+      });
       return;
     }
 
-    final ok = await app.login(
+    final bytes = await _c.api.fetchCaptchaImage(_captchaHash!);
+    if (!mounted) return;
+    setState(() {
+      _captchaImageBytes = bytes;
+      _captchaLoading = false;
+      if (_captchaImageBytes == null) {
+        _captchaError = AppLocalizations.of(context)!.captchaLoadFailed;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(AppLocalizations.of(context)!.loginTitle)),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 32),
+              // Logo
+              Center(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/app_logo.png',
+                    width: 80,
+                    height: 80,
+                    errorBuilder: (_, _, _) =>
+                        const Icon(Icons.forum, size: 80, color: Colors.blue),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // 用户名
+              TextFormField(
+                controller: _usernameCtrl,
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.loginUsername,
+                  prefixIcon: const Icon(Icons.person),
+                  border: const OutlineInputBorder(),
+                ),
+                validator: (v) => (v == null || v.isEmpty)
+                    ? AppLocalizations.of(context)!.loginUsernameHint
+                    : null,
+              ),
+              const SizedBox(height: 16),
+
+              // 密码
+              TextFormField(
+                controller: _passwordCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.loginPassword,
+                  prefixIcon: const Icon(Icons.lock),
+                  border: const OutlineInputBorder(),
+                ),
+                validator: (v) => (v == null || v.isEmpty)
+                    ? AppLocalizations.of(context)!.loginPasswordHint
+                    : null,
+              ),
+
+              // 验证码
+              if (_captchaRequired)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _captchaCtrl,
+                          decoration: InputDecoration(
+                            labelText: AppLocalizations.of(
+                              context,
+                            )!.loginCaptcha,
+                            prefixIcon: const Icon(Icons.security),
+                            border: const OutlineInputBorder(),
+                          ),
+                          validator: (v) =>
+                              _captchaRequired && (v == null || v.isEmpty)
+                              ? AppLocalizations.of(context)!.loginCaptchaHint
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: _refreshCaptcha,
+                        child: Container(
+                          width: 120,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: _captchaLoading
+                              ? const Center(
+                                  child: SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              : _captchaImageBytes != null
+                              ? Image.memory(
+                                  _captchaImageBytes!,
+                                  fit: BoxFit.contain,
+                                )
+                              : _captchaError != null
+                              ? Text(
+                                  _captchaError!,
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                )
+                              : Center(
+                                  child: Icon(
+                                    Icons.refresh,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                    size: 24,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // 错误信息
+              ValueListenableBuilder<String?>(
+                valueListenable: _c.loginError,
+                builder: (context, error, _) {
+                  if (error == null) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      error,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 24),
+
+              // 登录按钮
+              ValueListenableBuilder<bool>(
+                valueListenable: _c.loginLoading,
+                builder: (context, loading, _) {
+                  return FilledButton(
+                    onPressed: loading ? null : _handleLogin,
+                    child: loading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(AppLocalizations.of(context)!.commonLogin),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // 重置登录状态按钮
+              OutlinedButton.icon(
+                onPressed: () => _handleResetLoginState(context),
+                icon: const Icon(Icons.refresh),
+                label: Text(AppLocalizations.of(context)!.loginResetLoginState),
+              ),
+              const SizedBox(height: 8),
+
+              // 查看日志按钮
+              OutlinedButton.icon(
+                onPressed: () => _handleViewLogs(context),
+                icon: const Icon(Icons.bug_report),
+                label: Text(AppLocalizations.of(context)!.loginViewLogs),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =========================================================================
+  // 事件处理
+  // =========================================================================
+
+  Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    String? seccodeVerify;
+    if (_captchaRequired) {
+      seccodeVerify = _captchaCtrl.text;
+    }
+
+    final ok = await _c.login(
       _usernameCtrl.text,
       _passwordCtrl.text,
-      seccodeVerify: app.captchaRequired ? _captchaCtrl.text.trim() : null,
+      seccodeHash: _captchaHash,
+      seccodeVerify: seccodeVerify,
     );
 
     if (!mounted) return;
 
-    if (ok) {
-      // 登录成功，进入主页
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomePage()),
-        (route) => false,
-      );
-    } else {
-      final errorMsg = app.loginError ?? '登录失败，请检查用户名和密码';
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMsg),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-      // 登录失败后刷新验证码
+    if (!ok && _captchaRequired) {
       _captchaCtrl.clear();
-      context.read<AppProvider>().refreshCaptcha();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppProvider>();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('登录'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: '设置',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
-          ),
-        ],
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Logo
-                  Icon(
-                    Icons.school,
-                    size: 72,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '睿思论坛',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const Text('西安电子科技大学校园论坛'),
-                  const SizedBox(height: 32),
-
-                  // 用户名
-                  TextFormField(
-                    controller: _usernameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '用户名',
-                      prefixIcon: Icon(Icons.person),
-                      border: OutlineInputBorder(),
-                    ),
-                    textInputAction: TextInputAction.next,
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? '请输入用户名' : null,
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 密码
-                  TextFormField(
-                    controller: _passwordCtrl,
-                    decoration: InputDecoration(
-                      labelText: '密码',
-                      prefixIcon: const Icon(Icons.lock),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscure ? Icons.visibility_off : Icons.visibility,
-                        ),
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                      ),
-                    ),
-                    obscureText: _obscure,
-                    textInputAction: TextInputAction.next,
-                    onFieldSubmitted: null,
-                    validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
-                  ),
-
-                  // 验证码区域（仅当服务器要求时显示）
-                  if (app.captchaRequired) ...[
-                    const SizedBox(height: 16),
-                    _CaptchaWidget(
-                      controller: _captchaCtrl,
-                      imageBytes: app.captchaImageBytes,
-                      loading: app.captchaLoading,
-                      error: app.captchaError,
-                      onRefresh: () {
-                        _captchaCtrl.clear();
-                        app.refreshCaptcha();
-                      },
-                      onSubmitted: (_) => _doLogin(),
-                    ),
-                  ],
-
-                  const SizedBox(height: 24),
-
-                  // 登录按钮
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: FilledButton(
-                      onPressed: app.loginLoading ? null : _doLogin,
-                      child: app.loginLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('登录'),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // 重置登录状态
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      onPressed: _resetting ? null : _resetLoginState,
-                      icon: _resetting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh),
-                      label: const Text('重置登录状态'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 验证码控件
-class _CaptchaWidget extends StatelessWidget {
-  final TextEditingController controller;
-  final Uint8List? imageBytes;
-  final bool loading;
-  final String? error;
-  final VoidCallback onRefresh;
-  final ValueChanged<String> onSubmitted;
-
-  const _CaptchaWidget({
-    required this.controller,
-    required this.imageBytes,
-    required this.loading,
-    required this.error,
-    required this.onRefresh,
-    required this.onSubmitted,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 验证码输入框
-            Expanded(
-              child: TextFormField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: '验证码',
-                  prefixIcon: Icon(Icons.verified_user),
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.done,
-                textCapitalization: TextCapitalization.characters,
-                onFieldSubmitted: onSubmitted,
-                validator: (v) => null, // 由外部校验
-              ),
-            ),
-            const SizedBox(width: 12),
-            // 验证码图片
-            GestureDetector(
-              onTap: onRefresh,
-              child: Container(
-                width: 120,
-                height: 56,
-                decoration: BoxDecoration(
-                  border: Border.all(color: colorScheme.outline),
-                  borderRadius: BorderRadius.circular(4),
-                  color: colorScheme.surfaceContainerHighest,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: _buildContent(colorScheme),
-              ),
-            ),
-          ],
-        ),
-        if (error != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            error!,
-            style: TextStyle(fontSize: 12, color: colorScheme.error),
-          ),
-        ],
-        const SizedBox(height: 4),
-        GestureDetector(
-          onTap: onRefresh,
-          child: Text(
-            '点击图片刷新验证码',
-            style: TextStyle(
-              fontSize: 12,
-              color: colorScheme.primary,
-              decoration: TextDecoration.underline,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildContent(ColorScheme colorScheme) {
-    if (loading) {
-      return const Center(
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
+  Future<void> _handleResetLoginState(BuildContext context) async {
+    await _c.logout();
+    if (context.mounted) {
+      _checkLoginCaptcha();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.loginResetSuccess),
         ),
       );
     }
+  }
 
-    if (imageBytes != null && imageBytes!.isNotEmpty) {
-      return Image.memory(
-        imageBytes!,
-        fit: BoxFit.contain,
-        gaplessPlayback: true, // 防止刷新时闪烁
-        errorBuilder: (_, _, _) => Center(
-          child: Icon(Icons.broken_image, color: colorScheme.error, size: 24),
-        ),
-      );
-    }
-
-    return Center(
-      child: Icon(Icons.refresh, color: colorScheme.onSurfaceVariant, size: 24),
+  void _handleViewLogs(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => TalkerScreen(talker: _c.talker)),
     );
   }
 }

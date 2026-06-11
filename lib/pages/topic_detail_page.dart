@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_html/flutter_html.dart';
-import 'package:provider/provider.dart';
+import '../l10n/app_localizations.dart';
+import 'package:get_it/get_it.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
-import '../providers/app_provider.dart';
+import '../controller/ruisi_controller.dart';
 import '../models/post.dart';
+import '../models/vote.dart';
 import '../constants/urls.dart';
-import 'login_page.dart';
+import '../widgets/smiley_picker.dart';
+import '../utils/pick_file.dart';
 
 /// 帖子详情页
 class TopicDetailPage extends StatefulWidget {
@@ -26,6 +31,11 @@ class _TopicDetailPageState extends State<TopicDetailPage> {
   final _replyCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _showReply = false;
+  bool _showSmiley = false;
+  bool _replyUploading = false;
+  bool _replySubmitting = false;
+  final List<_UploadedAttachment> _replyAttachments = [];
+  RuisiService c = GetIt.instance<RuisiService>();
 
   dynamic _detail; // TopicDetail?
   bool _loading = true;
@@ -51,9 +61,8 @@ class _TopicDetailPageState extends State<TopicDetailPage> {
       _error = null;
     });
 
-    final app = context.read<AppProvider>();
     try {
-      final detail = await app.api.getTopicDetail(widget.tid, page: page);
+      final detail = await c.api.getTopicDetail(widget.tid, page: page);
       if (!mounted) return;
       setState(() {
         _detail = detail;
@@ -74,211 +83,432 @@ class _TopicDetailPageState extends State<TopicDetailPage> {
     if (content.isEmpty) return;
 
     if (content.length < 13) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('回复内容不能少于 13 个字符')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.topicDetailReplyTooShort),
+        ),
+      );
       return;
     }
 
-    final app = context.read<AppProvider>();
-    if (!app.isLoggedIn) {
-      if (!mounted) return;
-      final result = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginPage()),
-      );
-      if (result != true) return;
+    setState(() => _replySubmitting = true);
+
+    bool ok = false;
+    try {
+      final aids = _replyAttachments.map((a) => a.aid).toList();
+      ok = await c.api.replyTopicWithAttachments(widget.tid, content, aids);
+    } finally {
+      if (mounted) setState(() => _replySubmitting = false);
     }
 
-    final ok = await app.api.replyTopic(widget.tid, content);
     if (!mounted) return;
 
     if (ok) {
       _replyCtrl.clear();
-      setState(() => _showReply = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('回复成功')));
+      setState(() {
+        _showReply = false;
+        _showSmiley = false;
+        _replyAttachments.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.topicDetailReplySuccess),
+        ),
+      );
       _load(page: _currentPage);
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('回复失败')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.topicDetailReplyFailure),
+        ),
+      );
+    }
+  }
+
+  void _insertSmiley(String value) {
+    final text = _replyCtrl.text;
+    final selection = _replyCtrl.selection;
+    final cursorPos = selection.isValid ? selection.start : text.length;
+
+    final newText =
+        text.substring(0, cursorPos) + value + text.substring(cursorPos);
+    _replyCtrl.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: cursorPos + value.length),
+    );
+  }
+
+  Future<void> _pickReplyImage() async {
+    final file = await pickFile();
+    if (file == null) return;
+    if (!mounted) return;
+
+    final ext = file.extension?.toLowerCase();
+    const allowed = {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'};
+    if (ext == null || !allowed.contains(ext)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.imageFormatNotSupported),
+        ),
+      );
+      return;
+    }
+
+    final data = await file.readAsBytes();
+    if (!mounted) return;
+    if (data.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context)!.imageReadFailed)),
+      );
+      return;
+    }
+
+    setState(() => _replyUploading = true);
+    try {
+      final meta = await c.api.loadReplyUploadMeta(widget.tid);
+      final uid = meta.uploadUid ?? '';
+      final hash = meta.uploadHash ?? '';
+      final (ok, result) = await c.api.ruisiApi.uploadImage(
+        Urls.uploadImageUrl,
+        uid: uid,
+        hash: hash,
+        bytes: data,
+        filename: file.name,
+      );
+      if (!ok) throw Exception(result);
+      final parts = result.split('|');
+      final aid = parts.isNotEmpty ? parts.first : result;
+      final thumbnailUrl = parts.length > 1 ? parts[1] : '';
+      setState(() {
+        _replyAttachments.add(
+          _UploadedAttachment(aid: aid, thumbnailUrl: thumbnailUrl),
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${AppLocalizations.of(context)!.imageUploadFailed}: $e',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _replyUploading = false);
     }
   }
 
   Future<void> _addFavorite() async {
-    final app = context.read<AppProvider>();
-    if (!app.isLoggedIn) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginPage()),
-      );
-      return;
-    }
-    final ok = await app.addFavorite(widget.tid);
+    final ok = await c.api.addFavorite(widget.tid);
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(ok ? '收藏成功' : '收藏失败')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? AppLocalizations.of(context)!.topicDetailFavoriteSuccess
+              : AppLocalizations.of(context)!.topicDetailFavoriteFailure,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_detail?.title ?? '帖子详情'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bookmark_border),
-            tooltip: '收藏',
-            onPressed: _addFavorite,
+    final blockPop = _replyUploading || _replySubmitting;
+    return PopScope(
+      canPop: !blockPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            _detail?.title ?? AppLocalizations.of(context)!.topicDetailTitle,
           ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: () {
-              final url = '${Urls.baseUrl}viewthread.php?tid=${widget.tid}';
-              launchUrl(Uri.parse(url));
-            },
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.bookmark_border),
+              tooltip: AppLocalizations.of(context)!.commonFavorite,
+              onPressed: _addFavorite,
+            ),
+            Builder(
+              builder: (context) {
+                final box = context.findRenderObject() as RenderBox?;
+                return IconButton(
+                  icon: const Icon(Icons.share),
+                  onPressed: () {
+                    SharePlus.instance.share(
+                      ShareParams(
+                        sharePositionOrigin:
+                            box!.localToGlobal(Offset.zero) & box.size,
+                        uri: Uri(
+                          scheme: 'https',
+                          host: 'rs.xidian.edu.cn',
+                          path: 'forum.php',
+                          queryParameters: {
+                            "mod": "viewthread",
+                            "tid": widget.tid.toString(),
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => _load(),
+                      child: Text(AppLocalizations.of(context)!.commonRetry),
+                    ),
+                  ],
+                ),
+              )
+            : _detail == null
+            ? Center(
+                child: Text(AppLocalizations.of(context)!.topicDetailNoData),
+              )
+            : Column(
                 children: [
-                  Text(_error!),
-                  const SizedBox(height: 8),
-                  FilledButton.tonal(
-                    onPressed: () => _load(),
-                    child: const Text('重试'),
-                  ),
-                ],
-              ),
-            )
-          : _detail == null
-          ? const Center(child: Text('无数据'))
-          : Column(
-              children: [
-                Expanded(
-                  child: RefreshIndicator(
-                    onRefresh: () async => _load(page: _currentPage),
-                    child: ListView.separated(
-                      controller: _scrollCtrl,
-                      itemCount: (_detail.posts?.length ?? 0) + 2,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        if (i == 0) {
-                          return Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _detail.title ?? '',
-                                  style: theme.textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${_detail.author ?? ""} · ${_detail.time ?? ""}',
-                                  style: theme.textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          );
-                        }
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: () async => _load(page: _currentPage),
+                      child: ListView.separated(
+                        controller: _scrollCtrl,
+                        itemCount:
+                            (_detail.posts?.length ?? 0) +
+                            2 +
+                            (_currentPage == 1 && _detail.vote != null ? 1 : 0),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          // 投票卡片插在标题(index 0)之后
+                          final hasVote =
+                              _currentPage == 1 && _detail.vote != null;
+                          final voteOffset = hasVote ? 1 : 0;
 
-                        final posts = _detail.posts as List<Post>? ?? [];
-                        if (i <= posts.length) {
-                          final post = posts[i - 1];
-                          return _PostItem(
+                          if (i == 0) {
+                            return Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                _detail.title ?? '',
+                                style: theme.textTheme.titleLarge,
+                              ),
+                            );
+                          }
+
+                          if (hasVote && i == 1) {
+                            return _VoteCard(
+                              vote: _detail.vote!,
+                              onVote: () => _showVoteSheet(_detail.vote!),
+                            );
+                          }
+
+                          final postIndex = i - 1 - voteOffset;
+                          if (postIndex >= (_detail.posts?.length ?? 0)) {
+                            return _Pagination(
+                              current: _currentPage,
+                              total: _detail.totalPages ?? 1,
+                              onPageChanged: (p) => _load(page: p),
+                            );
+                          }
+                          final post = _detail.posts[postIndex] as Post;
+                          return _PostTile(
                             post: post,
                             onReply: () {
-                              _replyCtrl.text = '回复 ${post.author}：\n';
+                              _replyCtrl.text = AppLocalizations.of(context)!
+                                  .topicDetailReplyToPost(
+                                    post.index,
+                                    post.author,
+                                  );
                               setState(() => _showReply = true);
                             },
                           );
-                        }
-
-                        final totalPages = _detail.totalPages ?? 1;
-                        if (totalPages <= 1) {
-                          return const SizedBox();
-                        }
-                        return _Pagination(
-                          current: _detail.currentPage ?? 1,
-                          total: totalPages,
-                          onPageChanged: (p) => _load(page: p),
-                        );
-                      },
+                        },
+                      ),
                     ),
                   ),
-                ),
-                if (_showReply)
-                  Container(
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surface,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.9),
-                          blurRadius: 4,
-                          offset: const Offset(0, -2),
-                        ),
-                      ],
-                    ),
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _replyCtrl,
-                            maxLines: 3,
-                            minLines: 1,
-                            decoration: const InputDecoration(
-                              hintText: '写回复...',
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                            ),
+                  // 回复输入框
+                  if (_showReply) ...[
+                    if (_showSmiley) SmileyPicker(onSelected: _insertSmiley),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surface,
+                        border: Border(
+                          top: BorderSide(
+                            color: theme.colorScheme.outlineVariant,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        IconButton.filled(
-                          icon: const Icon(Icons.send),
-                          onPressed: _submitReply,
+                      ),
+                      child: SafeArea(
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _replyCtrl,
+                                maxLines: 3,
+                                minLines: 1,
+                                decoration: InputDecoration(
+                                  hintText: AppLocalizations.of(
+                                    context,
+                                  )!.topicDetailReplyHint,
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: Icon(
+                                _showSmiley
+                                    ? Icons.keyboard
+                                    : Icons.emoji_emotions_outlined,
+                              ),
+                              onPressed: _replyUploading || _replySubmitting
+                                  ? null
+                                  : () => setState(
+                                      () => _showSmiley = !_showSmiley,
+                                    ),
+                            ),
+                            IconButton(
+                              icon: _replyUploading
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.image_outlined),
+                              tooltip: AppLocalizations.of(
+                                context,
+                              )!.uploadImage,
+                              onPressed: _replyUploading || _replySubmitting
+                                  ? null
+                                  : _pickReplyImage,
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton.filled(
+                              icon: const Icon(Icons.send),
+                              onPressed: _replyUploading || _replySubmitting
+                                  ? null
+                                  : _submitReply,
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-              ],
-            ),
-      floatingActionButton: _showReply
-          ? null
-          : FloatingActionButton(
-              onPressed: () => setState(() => _showReply = true),
-              child: const Icon(Icons.reply),
-            ),
+                  ],
+                  if (_replyAttachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _replyAttachments
+                            .map(
+                              (a) => Stack(
+                                alignment: Alignment.topRight,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: a.thumbnailUrl.isNotEmpty
+                                        ? Image.network(
+                                            a.thumbnailUrl,
+                                            width: 64,
+                                            height: 64,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Container(
+                                            width: 64,
+                                            height: 64,
+                                            color: theme
+                                                .colorScheme
+                                                .surfaceContainerHighest,
+                                          ),
+                                  ),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      try {
+                                        await c.api.ruisiApi.post(
+                                          Urls.deleteUploadedUrl(a.aid),
+                                        );
+                                      } catch (_) {}
+                                      setState(
+                                        () => _replyAttachments.remove(a),
+                                      );
+                                    },
+                                    child: const CircleAvatar(
+                                      radius: 10,
+                                      backgroundColor: Colors.black54,
+                                      child: Icon(
+                                        Icons.close,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                ],
+              ),
+        floatingActionButton: _showReply
+            ? null
+            : FloatingActionButton(
+                onPressed: () => setState(() => _showReply = true),
+                child: const Icon(Icons.reply),
+              ),
+      ),
     );
+  }
+
+  Future<void> _showVoteSheet(VoteData vote) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _VoteSheet(vote: vote),
+    );
+    if (result == true && mounted) {
+      _load(page: _currentPage);
+    }
   }
 }
 
-/// 单条回复
-class _PostItem extends StatelessWidget {
-  final Post post;
-  final VoidCallback? onReply;
+class _UploadedAttachment {
+  final String aid;
+  final String thumbnailUrl;
 
-  const _PostItem({required this.post, this.onReply});
+  const _UploadedAttachment({required this.aid, this.thumbnailUrl = ''});
+}
+
+class _PostTile extends StatelessWidget {
+  final Post post;
+  final VoidCallback onReply;
+
+  const _PostTile({required this.post, required this.onReply});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -286,15 +516,18 @@ class _PostItem extends StatelessWidget {
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundImage: post.avatar != null
-                    ? CachedNetworkImageProvider(post.avatar!)
-                    : null,
-                child: post.avatar == null
-                    ? const Icon(Icons.person, size: 20)
-                    : null,
-              ),
+              if (post.avatar != null && post.avatar!.isNotEmpty)
+                ClipOval(
+                  child: CachedNetworkImage(
+                    imageUrl: post.avatar!,
+                    width: 32,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    placeholder: (_, _) => const Icon(Icons.person, size: 20),
+                  ),
+                )
+              else
+                const Icon(Icons.person, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -326,61 +559,15 @@ class _PostItem extends StatelessWidget {
             onLinkTap: (url, _, _) {
               if (url != null) launchUrl(Uri.parse(url));
             },
+            extensions: [_SmileyExtension(), _IgnoreJsOpExtension()],
           ),
-          if (post.images.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: post.images
-                  .map(
-                    (img) => GestureDetector(
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (_) => Dialog(
-                            child: InteractiveViewer(
-                              child: CachedNetworkImage(
-                                imageUrl: img.url,
-                                fit: BoxFit.contain,
-                                placeholder: (_, _) => const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                                errorWidget: (_, _, _) =>
-                                    const Icon(Icons.broken_image),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                      child: CachedNetworkImage(
-                        imageUrl: img.url,
-                        width: 100,
-                        height: 100,
-                        fit: BoxFit.cover,
-                        placeholder: (_, _) => Container(
-                          width: 100,
-                          height: 100,
-                          color: theme.colorScheme.surfaceContainerHighest,
-                        ),
-                        errorWidget: (_, _, _) => Container(
-                          width: 100,
-                          height: 100,
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          child: const Icon(Icons.broken_image),
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
+
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton.icon(
                 icon: const Icon(Icons.reply, size: 16),
-                label: const Text('回复'),
+                label: Text(AppLocalizations.of(context)!.commonReply),
                 onPressed: onReply,
               ),
             ],
@@ -391,7 +578,6 @@ class _PostItem extends StatelessWidget {
   }
 }
 
-/// 分页组件
 class _Pagination extends StatelessWidget {
   final int current;
   final int total;
@@ -444,6 +630,549 @@ class _Pagination extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Extension to render smiley images from local assets instead of network.
+///
+/// Discuz posts contain smileys as `<img src="static/image/smiley/...">`.
+/// The built-in [ImageBuiltIn] won't match these relative URLs.
+/// This extension intercepts them and loads from bundled assets.
+class _SmileyExtension extends HtmlExtension {
+  @override
+  Set<String> get supportedTags => {'img'};
+
+  @override
+  bool matches(ExtensionContext context) {
+    if (context.elementName != 'img') return false;
+    final src = context.attributes['src'] ?? '';
+    return src.contains('static/image/smiley');
+  }
+
+  @override
+  InlineSpan build(ExtensionContext context) {
+    final src = context.attributes['src'] ?? '';
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: _SmileyImage(src: src),
+    );
+  }
+}
+
+class _SmileyImage extends StatelessWidget {
+  final String src;
+
+  const _SmileyImage({required this.src});
+
+  @override
+  Widget build(BuildContext context) {
+    // Extract the path after 'smiley/' from the forum URL.
+    // e.g. "static/image/smiley/jgz/jgz065.png" → "smiley/jgz/jgz065.png"
+    final smileyIndex = src.indexOf('smiley/');
+    if (smileyIndex < 0) return const SizedBox.shrink();
+
+    String assetPath = src.substring(smileyIndex);
+
+    // Android parity: the 'default' category uses .gif in forum HTML
+    // but the bundled assets are .png files.
+    if (assetPath.contains('/default')) {
+      assetPath = assetPath.replaceAll('.gif', '.png');
+    }
+
+    final fullPath = 'assets/$assetPath';
+
+    return Image.asset(
+      fullPath,
+      width: 24,
+      height: 24,
+      errorBuilder: (_, _, _) {
+        // Local asset missing — fall back to network with full URL.
+        final fullUrl = src.startsWith('http') ? src : '${Urls.baseUrl}$src';
+        return Image.network(
+          fullUrl,
+          width: 24,
+          height: 24,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        );
+      },
+    );
+  }
+}
+
+/// Extension to render `<ignore_js_op>` tags from Discuz desktop HTML.
+///
+/// Three variants:
+/// 1. Pure image:       `<img file="real.jpg" src="none.gif"/>`
+/// 2. File-style image: `<dl class="tattl attm">...<img file="real.jpg"/>...`
+/// 3. Pure file:        `<dl class="tattl">...<a>filename.pdf</a>...`
+class _IgnoreJsOpExtension extends HtmlExtension {
+  @override
+  Set<String> get supportedTags => {'ignore_js_op'};
+
+  @override
+  bool matches(ExtensionContext context) =>
+      context.elementName == 'ignore_js_op';
+
+  @override
+  InlineSpan build(ExtensionContext context) {
+    final el = context.element;
+
+    // 1. Pure image: direct <img file="..."> child
+    final directImg = el?.querySelector('img[file]');
+    if (directImg != null) {
+      final file = directImg.attributes['file'] ?? '';
+      if (file.isNotEmpty) {
+        final url = file.startsWith('http') ? file : '${Urls.baseUrl}$file';
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _IgnoreJsOpImage(url: url),
+        );
+      }
+    }
+
+    // 2 & 3. <dl class="tattl ..."> child
+    final dl = el?.querySelector('dl.tattl');
+    if (dl != null) {
+      // 2. File-style image: has class "attm" and contains img[file]
+      if (dl.className.contains('attm')) {
+        final img = dl.querySelector('img[file]');
+        final file = img?.attributes['file'] ?? '';
+        if (file.isNotEmpty) {
+          final url = file.startsWith('http') ? file : '${Urls.baseUrl}$file';
+          return WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _IgnoreJsOpImage(url: url),
+          );
+        }
+      }
+
+      // 3. Pure file: has .attnm with download link
+      final linkEl = dl.querySelector('.attnm a');
+      if (linkEl != null) {
+        final href = linkEl.attributes['href'] ?? '';
+        final fileName = linkEl.text.trim();
+        final sizeText = dl.querySelectorAll('dd p').length > 1
+            ? dl.querySelectorAll('dd p')[1].text.trim()
+            : null;
+        final fullUrl = href.startsWith('http') ? href : '${Urls.baseUrl}$href';
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _IgnoreJsOpFileCard(
+            fileName: fileName,
+            sizeText: sizeText,
+            url: fullUrl,
+          ),
+        );
+      }
+    }
+
+    // Fallback: unknown structure, render nothing
+    return WidgetSpan(
+      child: Text("Unknown ignore_js_op element: \n ${context.element}"),
+    );
+  }
+}
+
+/// Network image used by [_IgnoreJsOpExtension] for pure/file-style images.
+class _IgnoreJsOpImage extends StatelessWidget {
+  final String url;
+  const _IgnoreJsOpImage({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text("Image Viewer"), elevation: 0),
+                body: Center(
+                  child: InteractiveViewer(
+                    clipBehavior: Clip.none,
+                    minScale: 1.0,
+                    maxScale: 4.0,
+                    child: CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.contain,
+                      placeholder: (_, _) => const Center(
+                        child: CircularProgressIndicator.adaptive(),
+                      ),
+                      errorWidget: (_, _, _) => const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          size: 48,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+        child: CachedNetworkImage(
+          imageUrl: url,
+          placeholder: (_, _) =>
+              const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          errorWidget: (_, _, _) => const Icon(Icons.broken_image, size: 48),
+        ),
+      ),
+    );
+  }
+}
+
+/// File attachment card used by [_IgnoreJsOpExtension] for pure files.
+class _IgnoreJsOpFileCard extends StatelessWidget {
+  final String fileName;
+  final String? sizeText;
+  final String url;
+  const _IgnoreJsOpFileCard({
+    required this.fileName,
+    this.sizeText,
+    required this.url,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: ListTile(
+        leading: const Icon(Icons.insert_drive_file),
+        title: Text(fileName, overflow: TextOverflow.ellipsis),
+        subtitle: sizeText != null ? Text(sizeText!) : null,
+        trailing: const Icon(Icons.download),
+        onTap: () => launchUrl(Uri.parse(url)),
+      ),
+    );
+  }
+}
+
+/// 投票摘要卡片（帖子详情页内嵌）
+///
+/// 三种状态：
+/// - canVote：显示选项列表 + "点此投票"按钮
+/// - voted：显示结果进度条 + 已投票提示
+/// - expired：显示过期提示
+class _VoteCard extends StatelessWidget {
+  final VoteData vote;
+  final VoidCallback onVote;
+
+  const _VoteCard({required this.vote, required this.onVote});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final typeText = vote.maxSelection > 1
+        ? AppLocalizations.of(
+            context,
+          )!.topicDetailVoteMultiSelect(vote.maxSelection)
+        : AppLocalizations.of(context)!.topicDetailVoteSingleSelect;
+
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 标题行
+          Row(
+            children: [
+              Icon(
+                Icons.how_to_vote,
+                size: 20,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${AppLocalizations.of(context)!.topicDetailVoteTitlePrefix} · $typeText',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            AppLocalizations.of(context)!.topicDetailVoteCount(vote.voteCount),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.outline,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // 按状态分发内容
+          if (vote.status == VoteStatus.expired) ...[
+            // 选项标签（如果有）
+            for (final opt in vote.options)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(opt.label, style: theme.textTheme.bodyMedium),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              AppLocalizations.of(context)!.topicDetailVoteExpired,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ] else if (vote.status == VoteStatus.voted) ...[
+            // 已投票（投票进行中）：结果列表 + 已投票提示
+            for (final r in vote.results) _ResultRow(result: r),
+            const SizedBox(height: 8),
+            Text(
+              AppLocalizations.of(context)!.topicDetailVoteAlreadyVoted,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ] else if (vote.status == VoteStatus.endedWithResults) ...[
+            // 投票已结束 + 有结果：结果列表 + 已结束提示
+            for (final r in vote.results) _ResultRow(result: r),
+            const SizedBox(height: 8),
+            Text(
+              AppLocalizations.of(context)!.topicDetailVoteEnded,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ] else if (vote.status == VoteStatus.canVoteWithResults) ...[
+            // 可投票 + 显示分布：选项列表 + 结果 + 投票按钮
+            for (final r in vote.results) _ResultRow(result: r),
+            const SizedBox(height: 8),
+            FilledButton.tonal(
+              onPressed: onVote,
+              child: Text(AppLocalizations.of(context)!.topicDetailVoteOpen),
+            ),
+          ] else ...[
+            // 可投票：选项列表
+            for (final opt in vote.options)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(opt.label, style: theme.textTheme.bodyMedium),
+              ),
+            const SizedBox(height: 8),
+            FilledButton.tonal(
+              onPressed: onVote,
+              child: Text(AppLocalizations.of(context)!.topicDetailVoteOpen),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 单行投票结果（进度条 + 百分比 + 票数）
+class _ResultRow extends StatelessWidget {
+  final VoteResultItem result;
+  const _ResultRow({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = Color(int.parse(result.color.replaceFirst('#', '0xff')));
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(result.label, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: result.percent / 100,
+                    minHeight: 8,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    valueColor: AlwaysStoppedAnimation(color),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${result.percent.toStringAsFixed(2)}% (${result.count})',
+                style: theme.textTheme.bodySmall?.copyWith(color: color),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 投票底部弹窗（仅 canVote 状态使用）
+class _VoteSheet extends StatefulWidget {
+  final VoteData vote;
+  const _VoteSheet({required this.vote});
+
+  @override
+  State<_VoteSheet> createState() => _VoteSheetState();
+}
+
+class _VoteSheetState extends State<_VoteSheet> {
+  final Set<String> _selected = {};
+  bool _submitting = false;
+
+  bool get _isMulti => widget.vote.maxSelection > 1;
+
+  void _toggle(String value) {
+    setState(() {
+      if (_isMulti) {
+        if (_selected.contains(value)) {
+          _selected.remove(value);
+        } else if (_selected.length < widget.vote.maxSelection) {
+          _selected.add(value);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(
+                  context,
+                )!.topicDetailVoteMaxSelection(widget.vote.maxSelection),
+              ),
+            ),
+          );
+        }
+      } else {
+        _selected
+          ..clear()
+          ..add(value);
+      }
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_selected.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.topicDetailVoteNotSelected,
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      final (ok, err) = await GetIt.instance<RuisiService>().api.submitVote(
+        widget.vote.actionUrl,
+        _selected.toList(),
+      );
+      if (!mounted) return;
+
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.topicDetailVoteSuccess),
+          ),
+        );
+        context.pop(true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              err ?? AppLocalizations.of(context)!.topicDetailVoteFailure,
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final typeText = _isMulti
+        ? AppLocalizations.of(
+            context,
+          )!.topicDetailVoteMultiSelect(widget.vote.maxSelection)
+        : AppLocalizations.of(context)!.topicDetailVoteSingleSelect;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.5,
+      minChildSize: 0.3,
+      maxChildSize: 0.8,
+      expand: false,
+      builder: (ctx, scrollCtrl) {
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${AppLocalizations.of(context)!.topicDetailVoteSheetTitle}($typeText)',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => context.pop(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollCtrl,
+                itemCount: widget.vote.options.length,
+                itemBuilder: (_, idx) {
+                  final opt = widget.vote.options[idx];
+                  final checked = _selected.contains(opt.value);
+                  return _isMulti
+                      ? CheckboxListTile(
+                          value: checked,
+                          title: Text(opt.label),
+                          onChanged: (_) => _toggle(opt.value),
+                        )
+                      : RadioListTile<String>(
+                          value: opt.value,
+                          groupValue: _selected.isEmpty
+                              ? null
+                              : _selected.first,
+                          title: Text(opt.label),
+                          onChanged: (_) => _toggle(opt.value),
+                        );
+                },
+              ),
+            ),
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _submitting ? null : _submit,
+                    child: _submitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(AppLocalizations.of(context)!.commonSubmit),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

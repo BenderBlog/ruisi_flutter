@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import 'package:get_it/get_it.dart';
+import '../l10n/app_localizations.dart';
 
-import '../providers/app_provider.dart';
-import 'forum_topics_page.dart';
+import '../controller/ruisi_controller.dart';
 
-/// 论坛板块列表
+/// 板块列表页面
 class ForumListPage extends StatefulWidget {
   const ForumListPage({super.key});
 
@@ -16,86 +17,101 @@ class ForumListPage extends StatefulWidget {
 }
 
 class _ForumListPageState extends State<ForumListPage> {
+  final c = GetIt.instance<RuisiService>();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppProvider>().loadForums();
+      c.loadForums();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppProvider>();
+    final title = AppLocalizations.of(context)!.forumListTitle;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('论坛板块')),
-      body: app.forumGroups.isEmpty && app.forumLoading
-          ? const Center(child: CircularProgressIndicator())
-          : app.forumGroups.isEmpty
-          ? const Center(child: Text('暂无板块'))
-          : ListView.builder(
-              itemCount: app.forumGroups.length,
+      appBar: AppBar(title: Text(title)),
+      // 使用 ValueListenableBuilder 统一监听单一状态
+      body: ValueListenableBuilder<ForumState>(
+        valueListenable: c.forumState,
+        builder: (context, state, child) {
+          // 1. 错误状态处理 (当发生错误且当前没有缓存数据时)
+          if (state.hasError && state.groups.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    state.errorMessage ??
+                        AppLocalizations.of(context)!.loadFailed,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => c.loadForums(),
+                    icon: const Icon(Icons.refresh),
+                    label: Text(AppLocalizations.of(context)!.tapToRetry),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          // 2. 纯加载状态处理 (第一次打开页面，没有数据时的转圈)
+          if (state.isLoading && state.groups.isEmpty) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          // 3. 空数据状态处理
+          if (state.groups.isEmpty) {
+            return Center(
+              child: Text(AppLocalizations.of(context)!.forumListEmpty),
+            );
+          }
+
+          // 4. 正常数据展示 (支持下拉刷新)
+          return RefreshIndicator(
+            onRefresh: () => c.loadForums(),
+            child: ListView.builder(
+              itemCount: state.groups.length,
               itemBuilder: (_, i) {
-                final group = app.forumGroups[i];
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Text(
-                        group.name,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    ...group.forums.map(
-                      (forum) => ListTile(
-                        leading: const Icon(Icons.forum_outlined),
-                        title: Text(forum.name),
-                        subtitle: forum.description != null
-                            ? Text(
-                                forum.description!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              )
-                            : null,
-                        trailing: forum.todayPosts > 0
-                            ? Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '${forum.todayPosts}',
-                                  style: Theme.of(context).textTheme.labelSmall,
-                                ),
-                              )
-                            : null,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ForumTopicsPage(
-                              fid: forum.fid,
-                              title: forum.name,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (i < app.forumGroups.length - 1) const Divider(),
-                  ],
+                final group = state.groups[i];
+                return ExpansionTile(
+                  title: Text(
+                    group.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  initiallyExpanded: i == 0,
+                  children: group.forums.map((forum) {
+                    return ListTile(
+                      leading: const Icon(Icons.forum_outlined),
+                      title: Text(forum.name),
+                      subtitle: (forum.description ?? "").isNotEmpty
+                          ? Text(
+                              forum.description ?? "",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : null,
+                      onTap: () => context.push('/forum/${forum.fid}', extra: forum.name),
+                    );
+                  }).toList(),
                 );
               },
             ),
+          );
+        },
+      ),
     );
   }
 }
